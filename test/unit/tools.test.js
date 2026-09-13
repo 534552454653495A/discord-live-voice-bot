@@ -308,6 +308,32 @@ describe('voice_disconnect', () => {
 	});
 });
 
+describe('member lookup', () => {
+	it('resolves a raw user id and a mention, not just a name', async () => {
+		const { deps, guild } = makeDeps({ owner: true });
+		const jane = guild.members.cache.get('1');
+		jane.roles = { cache: new Map() };
+		jane.joinedAt = new Date(0);
+		guild.members.cache.set('389223135133564939', { ...jane, id: '389223135133564939', displayName: 'Owner' });
+		for (const value of ['389223135133564939', '<@389223135133564939>', '<@!389223135133564939>']) {
+			const result = await callTool('user_info', { member: value }, deps);
+			assert.equal(result.ok, true, `${value}: ${result.spoken}`);
+			assert.match(result.spoken, /Owner/);
+		}
+	});
+
+	it('falls back to whoever is speaking when no member is given', async () => {
+		const { deps, guild } = makeDeps({ owner: true });
+		const jane = guild.members.cache.get('1');
+		jane.roles = { cache: new Map() };
+		jane.joinedAt = new Date(0);
+		deps.currentSpeakerId = () => '1';
+		const result = await callTool('user_info', {}, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.match(result.spoken, /Jane Doe/);
+	});
+});
+
 describe('parsePermissions', () => {
 	it('prefers the suffixed form of a real alias over a longer, stronger permission', () => {
 		// "messages" used to reach the "manage messages" alias and hand out moderation rights.

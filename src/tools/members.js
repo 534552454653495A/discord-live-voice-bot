@@ -194,11 +194,17 @@ export const tools = [
 
 	defineTool({
 		name: 'user_info',
-		description: 'Gives the details of a member: nickname, roles, the date they joined the server.',
-		parameters: P.obj({ member: P.str('Person name') }, ['member']),
+		description:
+			'Gives the details of a member: nickname, roles, the date they joined the server. Accepts a name, a ' +
+			'mention or a user id; leave member empty for whoever is speaking. You are already told who is ' +
+			'speaking, so you do not need this to answer "who am I".',
+		parameters: P.obj({ member: P.str('Person name, mention or id; empty = the current speaker') }),
 		async handler(args, deps) {
-			const member = await findMember(deps, String(args.member ?? ''));
-			if (!member) return { ok: false, spoken: t('tools.members.member_not_found', { name: args.member }) };
+			// Empty means "the person talking to me": the model asks that a lot, and looking up an empty
+			// string used to fail with "I could not find anyone called ''".
+			const asked = String(args.member ?? '').trim();
+			const member = asked ? await findMember(deps, asked) : await findMember(deps, String(deps.currentSpeakerId?.() ?? ''));
+			if (!member) return { ok: false, spoken: t('tools.members.member_not_found', { name: asked || t('tools.helpers.someone') }) };
 			const roles = [...(member.roles?.cache?.values?.() ?? [])]
 				.filter((role) => role.name !== '@everyone')
 				.map((role) => role.name);

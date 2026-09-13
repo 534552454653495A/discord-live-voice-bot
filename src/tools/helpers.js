@@ -104,6 +104,19 @@ export const displayName = (member, fallback = t('tools.helpers.someone')) => me
  * @returns {Promise<{ member: object|null, exact: boolean }>} exact = the name matched fully/by prefix/by substring (not fuzzily)
  */
 export async function findMemberDetailed(deps, name) {
+	// A Discord id or a mention is an exact answer, and the model does pass one: the speaker context and
+	// the configuration both carry raw ids. Name matching would never resolve it, so it is tried first.
+	const raw = String(name ?? '').trim();
+	// The member cache is keyed by id, so a hit here is unambiguous and no display name can produce one.
+	const byKey = raw ? deps.guild.members.cache.get(raw) : null;
+	if (byKey) return { member: byKey, exact: true };
+	const id = userIdOf(raw);
+	if (id) {
+		const cached = deps.guild.members.cache.get(id);
+		if (cached) return { member: cached, exact: true };
+		const fetched = await deps.guild.members.fetch(id).catch(() => null);
+		if (fetched) return { member: fetched, exact: true };
+	}
 	const needle = normalize(name);
 	if (!needle) return { member: null, exact: false };
 	const botChannelId = deps.currentVoiceChannel?.()?.id ?? null;
@@ -141,6 +154,13 @@ export async function findMemberDetailed(deps, name) {
 
 	deps.log?.(t('tools.helpers.log_member_not_found', { name }));
 	return { member: null, exact: false };
+}
+
+/** "389223135133564939", "<@389223135133564939>", "<@!389…>" -> the id; anything else -> null. */
+export function userIdOf(value) {
+	const text = String(value ?? '').trim();
+	const match = /^<@!?(\d{16,20})>$/u.exec(text) ?? /^(\d{16,20})$/u.exec(text);
+	return match ? match[1] : null;
 }
 
 export async function findMember(deps, name) {

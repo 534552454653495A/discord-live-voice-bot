@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-09-13
+
+### Fixed
+
+- **Member lookup ignored Discord ids.** A name, a nickname and a similarity score were all it tried, so
+  `user_info` with a raw user id or a `<@id>` mention answered "I could not find anyone called that" —
+  which is exactly what the assistant sends when it wants to check who the owner is. Ids, mentions and a
+  direct cache hit are now resolved before any name matching, and `user_info` with no member falls back
+  to whoever is speaking instead of searching for an empty string.
+- The assistant looked identity questions up with a tool although it is already told who is speaking, and
+  it refused owner-only requests in advance rather than letting the gate decide. Its instructions now say
+  to answer "who am I" from the speaker context, and to call the tool and report a refusal only when the
+  gate itself returns one.
+
 ## [1.5.0] — 2026-09-13
 
 ### Added
