@@ -45,6 +45,20 @@ function fakeSpawn(pcmByTitle) {
 	};
 }
 
+/**
+ * Waits until there is a whole frame in the player's buffer.
+ * The fake ffmpeg writes its PCM on the next tick of the event loop, and a fixed sleep is a guess
+ * about how quickly the machine gets round to it: on a loaded runner the guess is wrong and the test
+ * fails for no reason at all. Waiting for the condition itself is the same test without the dice.
+ */
+async function waitForFrame(player, timeoutMs = 2000) {
+	const deadline = Date.now() + timeoutMs;
+	while (player.ring.length < STEREO_SAMPLES_PER_FRAME_48K) {
+		if (Date.now() > deadline) throw new Error('the player never buffered a frame');
+		await new Promise((r) => setTimeout(r, 2));
+	}
+}
+
 const pcmSeconds = (seconds, value = 1234) => {
 	const samples = new Int16Array(48_000 * 2 * seconds).fill(value);
 	return Buffer.from(samples.buffer);
@@ -70,7 +84,7 @@ describe('MusicPlayer', () => {
 		assert.equal(second.position, 1);
 		assert.equal(player.state().queue.length, 1);
 
-		await new Promise((r) => setTimeout(r, 30));
+		await waitForFrame(player);
 		const dst = new Int16Array(STEREO_SAMPLES_PER_FRAME_48K);
 		const n = player.readFrame(dst);
 		assert.equal(n, STEREO_SAMPLES_PER_FRAME_48K);
@@ -95,7 +109,7 @@ describe('MusicPlayer', () => {
 		const fake = fakeSpawn({ [path.join(dir, 'a.wav')]: pcmSeconds(1) });
 		const player = new MusicPlayer({ musicDir: dir, spawnImpl: fake.spawn, volume: 0.5, duckVolume: 0.1, log: () => {} });
 		await player.enqueue('a');
-		await new Promise((r) => setTimeout(r, 20));
+		await waitForFrame(player);
 		const dst = new Int16Array(STEREO_SAMPLES_PER_FRAME_48K);
 		assert.ok(player.readFrame(dst) > 0);
 		player.pause();
