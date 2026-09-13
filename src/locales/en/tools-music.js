@@ -1,5 +1,9 @@
 // Strings for src/tools/music.js (en). Referenced as "tools.music.<key>".
 export default {
+	ytdlp_missing: 'I do not have yt-dlp installed, so I cannot fetch music. Install it and set YTDLP_PATH, or turn YTDLP_AUTO_DOWNLOAD back on.',
+	play_failed_generic: 'I could not play that.',
+	queue_full: 'The queue is full; let some tracks finish first.',
+	unsupported_link: 'I only play links from the usual media sites; give me the song name instead and I will find it.',
 	disabled: 'Music is turned off in this setup (.env: MUSIC=1).',
 	no_query: 'I could not work out what you want me to play.',
 	playing_event: 'playing: {label}',

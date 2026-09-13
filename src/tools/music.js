@@ -1,6 +1,7 @@
 // Music tools: the bot's own player (src/music.js). Music ducks by itself while the bot speaks.
 
 import { t } from '../i18n/index.js';
+import { QUEUE_FULL, UNSUPPORTED_LINK, YTDLP_MISSING } from '../music.js';
 import { P, defineTool } from './registry.js';
 
 /** The player is not wired up (.env: MUSIC=0); every music tool answers the same way. */
@@ -38,7 +39,11 @@ export const tools = [
 				};
 			} catch (err) {
 				deps.log?.(t('tools.music.log_play_failed', { error: err.message }));
-				return { ok: false, spoken: t('tools.music.play_failed', { error: err.message }) };
+				// yt-dlp's stderr can echo back what a fetched page said, so only our own reasons are spoken.
+				if (err.message === UNSUPPORTED_LINK) return { ok: false, spoken: t('tools.music.unsupported_link') };
+				if (err.message === QUEUE_FULL) return { ok: false, spoken: t('tools.music.queue_full') };
+				if (err.message === YTDLP_MISSING) return { ok: false, spoken: t('tools.music.ytdlp_missing') };
+				return { ok: false, spoken: t('tools.music.play_failed_generic') };
 			}
 		},
 	}),

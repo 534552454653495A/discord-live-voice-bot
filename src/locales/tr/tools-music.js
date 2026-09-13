@@ -1,5 +1,9 @@
 // Strings for src/tools/music.js (tr). Referenced as "tools.music.<key>".
 export default {
+	ytdlp_missing: 'yt-dlp kurulu değil, müziği getiremiyorum. Kurup YTDLP_PATH ver ya da YTDLP_AUTO_DOWNLOAD ayarını aç.',
+	play_failed_generic: 'Bunu çalamadım.',
+	queue_full: 'Sıra dolu; önce birkaç parça bitsin.',
+	unsupported_link: 'Yalnızca bilinen müzik sitelerinin linklerini çalabiliyorum; şarkının adını söyle, bulurum.',
 	disabled: 'Müzik özelliği bu kurulumda kapalı (.env: MUSIC=1).',
 	no_query: 'Ne çalmamı istediğini anlayamadım.',
 	playing_event: 'çalıyor: {label}',

@@ -13,12 +13,33 @@ import { t } from './i18n/index.js';
 const FILE_ROTATE_BYTES = 5 * 1024 * 1024;
 const BACKUPS = 2;
 
+// Personal text can arrive in `text` (a transcript, a DM, a note) or hidden inside `meta` (the owner's
+// words behind a gate decision, a tool's arguments, a spoken music query). While recording is off all of
+// it is replaced by its length, so the event is still counted and timed but says nothing.
+const REDACT_TEXT_KINDS = new Set(['voice', 'dm', 'channel', 'memory']);
+const REDACT_META_FIELDS = ['text', 'args', 'query', 'note', 'result'];
+
+function redactEntry(entry) {
+	if (REDACT_TEXT_KINDS.has(entry.kind) && entry.text) entry.text = `[${String(entry.text).length} characters, not recorded]`;
+	if (entry.meta && typeof entry.meta === 'object') {
+		for (const field of REDACT_META_FIELDS) {
+			if (entry.meta[field] !== undefined && entry.meta[field] !== null) {
+				entry.meta = { ...entry.meta, [field]: `[${String(entry.meta[field]).length} characters, not recorded]` };
+			}
+		}
+	}
+	return entry;
+}
+
 /** Event kinds: dm | channel | voice | tool | gate | safety | session | latency | music | memory */
 export class ActivityLog {
-	constructor({ file = null, limit = 3000, log = null } = {}) {
+	constructor({ file = null, limit = 3000, log = null, redact = () => false } = {}) {
 		this.file = file;
 		this.limit = limit;
 		this.log = log;
+		// Privacy is enforced HERE rather than at each call site: every producer reaches push(), so a new
+		// one cannot forget to redact. `redact()` is read per event so the setting can change at runtime.
+		this.redact = redact;
 		this.events = [];
 		this.nextId = 1;
 		this.counts = Object.create(null);
@@ -40,6 +61,7 @@ export class ActivityLog {
 			text: event.text ?? '',
 			meta: event.meta ?? null,
 		};
+		if (this.redact()) redactEntry(entry);
 		this.events.push(entry);
 		this.counts[entry.kind] = (this.counts[entry.kind] ?? 0) + 1;
 		if (this.events.length > this.limit) this.events.splice(0, this.events.length - this.limit);

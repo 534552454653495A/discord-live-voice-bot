@@ -171,6 +171,8 @@ export function loadConfig(env = process.env) {
 		musicDir: str(env.MUSIC_DIR),
 		musicMaxMinutes: num(env.MUSIC_MAX_MINUTES, 20, { min: 0 }),
 		ytDlpPath: str(env.YTDLP_PATH),
+		// Downloading yt-dlp and running it is a supply-chain decision; 0 makes the operator install it.
+		ytDlpAutoDownload: bool(env.YTDLP_AUTO_DOWNLOAD, true),
 		ffmpegPath: str(env.FFMPEG_PATH),
 	};
 	return config;

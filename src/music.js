@@ -71,7 +71,41 @@ export function resolveFfmpeg(preferred = null) {
 	return 'ffmpeg';
 }
 
+// Hosts a spoken "play X" link may point at. The query comes from whoever is speaking, and yt-dlp would
+// happily fetch an address on the owner's own network, so anything else is treated as search text.
+const MEDIA_HOSTS = [
+	'youtube.com',
+	'youtu.be',
+	'soundcloud.com',
+	'bandcamp.com',
+	'vimeo.com',
+	'twitch.tv',
+	'spotify.com',
+	'mixcloud.com',
+	'audius.co',
+	'archive.org',
+	'dailymotion.com',
+];
+
+// Failure reasons the caller turns into spoken text; they are matched, not shown raw.
+export const UNSUPPORTED_LINK = 'unsupported-link';
+export const QUEUE_FULL = 'queue-full';
+export const YTDLP_MISSING = 'ytdlp-missing';
+
 const isUrl = (text) => /^https?:\/\//i.test(String(text ?? '').trim());
+
+/** A link we are willing to hand to yt-dlp. */
+export function isAllowedMediaUrl(text) {
+	let url;
+	try {
+		url = new URL(String(text ?? '').trim());
+	} catch {
+		return false;
+	}
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+	const host = url.hostname.toLowerCase().replace(/^www\./u, '');
+	return MEDIA_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
 const formatDuration = (seconds) => {
 	if (!Number.isFinite(seconds) || seconds <= 0) return null;
 	const m = Math.floor(seconds / 60);
@@ -87,6 +121,8 @@ export class MusicPlayer {
 		volume = 0.35,
 		duckVolume = 0.12,
 		maxMinutes = 20,
+		maxQueue = 50,
+		autoDownload = true,
 		binDir = path.join(here, '..', 'tools', 'bin'),
 		log = () => {},
 		onTrackStart = null,
@@ -102,6 +138,9 @@ export class MusicPlayer {
 		this.volume = Math.max(0, Math.min(1, volume));
 		this.duckVolume = Math.max(0, Math.min(1, duckVolume));
 		this.maxMinutes = maxMinutes;
+		// A queue nobody can cap is a way for one speaker to keep the machine busy indefinitely.
+		this.maxQueue = Math.max(1, maxQueue);
+		this.autoDownload = autoDownload !== false;
 		this.log = log;
 		this.onTrackStart = onTrackStart;
 		this.onTrackEnd = onTrackEnd;
@@ -154,6 +193,9 @@ export class MusicPlayer {
 			this.ytDlp = 'yt-dlp';
 			return 'yt-dlp';
 		}
+		// Nothing installed. Fetching a binary and running it is a supply-chain decision, so it is the
+		// operator's to make: with autoDownload off we say what to install instead of doing it silently.
+		if (!this.autoDownload) throw new Error(YTDLP_MISSING);
 		// Download it (from the GitHub releases), ~10 MB.
 		const target = candidates[candidates.length - 1];
 		this.log(t('music.log_ytdlp_download', { target }));
@@ -185,6 +227,7 @@ export class MusicPlayer {
 		if (local) return local;
 
 		const ytDlp = await this.ensureYtDlp();
+		if (isUrl(text) && !isAllowedMediaUrl(text)) throw new Error(UNSUPPORTED_LINK);
 		const target = isUrl(text) ? text : `ytsearch1:${text}`;
 		const args = ['-j', '--no-playlist', '--no-warnings', '--default-search', 'ytsearch', '--skip-download', target];
 		const raw = await this._run(ytDlp, args, 30_000);
@@ -272,6 +315,7 @@ export class MusicPlayer {
 		const track = await this.resolve(query);
 		track.requestedBy = requestedBy;
 		track.id = ++this.seq;
+		if (this.queue.length >= this.maxQueue) throw new Error(QUEUE_FULL);
 		this.queue.push(track);
 		const position = this.queue.length;
 		if (!this.current) {

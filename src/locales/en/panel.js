@@ -1,5 +1,6 @@
 // panel strings (en). Keys are referenced as "panel.<key>" through src/i18n.
 export default {
+	not_recorded: '[{count} characters, not recorded]',
 	html_lang: 'en',
 	time_locale: 'en-US',
 	page_title: 'Voice bot — local panel',

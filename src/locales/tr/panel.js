@@ -1,5 +1,6 @@
 // panel strings (tr). Keys are referenced as "panel.<key>" through src/i18n.
 export default {
+	not_recorded: '[{count} karakter, kaydedilmedi]',
 	html_lang: 'tr',
 	time_locale: 'tr-TR',
 	page_title: 'Sesli bot — yerel panel',

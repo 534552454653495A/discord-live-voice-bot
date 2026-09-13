@@ -54,7 +54,7 @@ const recentActions = new RecentActions();
 const reader = new ChannelReader({ defaultLimit: cfg.readLimit });
 const replyLimiter = new ReplyLimiter({ perMinute: 6 });
 // The event stream the panel shows: voice transcripts, DM/channel messages, tool calls, gate decisions.
-const activity = new ActivityLog({ file: path.join(dataDir, 'activity.jsonl'), log });
+const activity = new ActivityLog({ file: path.join(dataDir, 'activity.jsonl'), log, redact: () => !cfg.recordTranscripts });
 
 /** Privacy: while recording is off, personal text (voice transcript, DM, channel message) is counted, not stored. */
 function record(event) {

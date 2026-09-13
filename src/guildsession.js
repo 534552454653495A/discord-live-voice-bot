@@ -142,6 +142,7 @@ export class GuildSession {
 			? new MusicPlayer({
 					ffmpegPath: cfg.ffmpegPath,
 					ytDlpPath: cfg.ytDlpPath,
+					autoDownload: cfg.ytDlpAutoDownload,
 					musicDir: cfg.musicDir,
 					volume: cfg.musicVolume,
 					duckVolume: cfg.musicDuckVolume,

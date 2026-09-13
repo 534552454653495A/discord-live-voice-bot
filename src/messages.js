@@ -33,22 +33,35 @@ const VISION_RULES = () => t('messages.vision_rules');
 const REPLY_WINDOW_MS = 60_000;
 
 /** Simple sliding-window counter (per user). */
+/**
+ * Reply budget, per person and for the process as a whole. Without the process-wide window every member
+ * gets their own quota of model calls per minute, and all of them are billed to the owner's key.
+ */
 export class ReplyLimiter {
-	constructor({ perMinute = 6, now = Date.now } = {}) {
+	constructor({ perMinute = 6, totalPerMinute = 30, now = Date.now } = {}) {
 		this.perMinute = perMinute;
+		this.totalPerMinute = totalPerMinute;
 		this.now = now;
 		this.hits = new Map();
+		this.all = [];
 	}
 
 	allow(userId) {
 		const at = this.now();
-		const list = (this.hits.get(userId) ?? []).filter((stamp) => at - stamp < REPLY_WINDOW_MS);
+		const fresh = (stamps) => stamps.filter((stamp) => at - stamp < REPLY_WINDOW_MS);
+		this.all = fresh(this.all);
+		if (this.all.length >= this.totalPerMinute) return false;
+		const list = fresh(this.hits.get(userId) ?? []);
 		if (list.length >= this.perMinute) {
-			this.hits.set(userId, list);
+			// Keep the bucket only while it still holds something, so one entry per past sender does not
+			// accumulate for the lifetime of the process.
+			if (list.length) this.hits.set(userId, list);
+			else this.hits.delete(userId);
 			return false;
 		}
 		list.push(at);
 		this.hits.set(userId, list);
+		this.all.push(at);
 		return true;
 	}
 }
