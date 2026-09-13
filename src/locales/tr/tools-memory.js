@@ -1,5 +1,7 @@
 // Strings for src/tools/memory.js (tr). Referenced as "tools.memory.<key>".
 export default {
+	search_empty: '"{query}" hakkında kayıtlı bir şey yok.',
+	search_hits: 'Şunlar kayıtlı: {notes}.',
 	disabled: 'Hafıza özelliği kapalı (.env: MEMORY=1).',
 	no_target_remember: 'Kimin hakkında not alacağımı anlayamadım.',
 	empty_note: 'Not boş görünüyor.',

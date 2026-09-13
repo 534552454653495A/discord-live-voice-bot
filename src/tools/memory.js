@@ -54,10 +54,24 @@ export const tools = [
 
 	defineTool({
 		name: 'recall_notes',
-		description: 'Returns the notes you saved about a person. If member is empty, the current speaker.',
-		parameters: P.obj({ member: P.str('Person name (empty = the current speaker)') }),
+		description:
+			'Reads your saved notes. With `search` it looks through the notes of EVERYONE for a word or phrase -- use that ' +
+			'whenever you are asked what you remember about something ("what is my favourite song", "check your memory"), ' +
+			'before saying you do not know. With `member` (or neither) it returns the notes about that person.',
+		parameters: P.obj({
+			member: P.str('Person name (empty = the current speaker)'),
+			search: P.str('Word or phrase to look for across every saved note; an empty string returns the most recent notes'),
+		}),
 		async handler(args, deps) {
 			if (!deps.memory) return noMemory();
+			if (args.search !== undefined && args.search !== null) {
+				const hits = deps.memory.search(String(args.search));
+				if (!hits.length) {
+					return { ok: true, spoken: t('tools.memory.search_empty', { query: String(args.search) }), data: { notes: [] } };
+				}
+				const list = hits.map((hit) => (hit.name ? `${hit.name}: ${hit.text}` : hit.text));
+				return { ok: true, spoken: t('tools.memory.search_hits', { notes: list.join('; ') }), data: { notes: hits } };
+			}
 			const target = await targetOf(deps, args.member);
 			if (!target) return { ok: false, spoken: t('tools.memory.no_target_recall') };
 			const notes = deps.memory.notesFor(target.id);

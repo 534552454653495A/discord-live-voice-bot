@@ -90,6 +90,32 @@ export class MemoryStore {
 		return picked.map((entry) => `- ${entry.text}`).join('\n');
 	}
 
+	/**
+	 * Searches every note of every person. Without a query it returns the most recent notes, so
+	 * "look in your memory" has something to answer with instead of a bare "nothing found".
+	 * @returns {Array<{ id: string, name: string|null, text: string, at: number }>}
+	 */
+	search(query = '', { limit = 12 } = {}) {
+		const needle = normalize(String(query ?? '').replace(/['’"“”]/gu, ' '));
+		const words = needle.split(' ').filter((word) => word.length >= 3);
+		const hits = [];
+		for (const [id, user] of Object.entries(this.data.users)) {
+			for (const note of user.notes ?? []) {
+				// Quotes become spaces first: normalize() strips a short apostrophe suffix (for "Ali'ye" -> "ali"),
+				// which would otherwise swallow a quoted keyword such as 'muz' out of the note.
+				const haystack = normalize(`${note.text} ${user.name ?? ''}`.replace(/['’"“”]/gu, ' '));
+				// Whole words, not raw substrings: searching for "muz" must not match "sunucumuzda".
+				const tokens = haystack.split(' ').filter(Boolean);
+				const matches = (word) => tokens.some((token) => token === word || (word.length >= 4 && token.startsWith(word)));
+				const score = !needle ? 0 : words.filter(matches).length + (haystack.includes(` ${needle} `) || haystack.startsWith(`${needle} `) ? 2 : 0);
+				if (needle && score === 0) continue;
+				hits.push({ id, name: user.name ?? null, text: note.text, at: note.at ?? 0, score });
+			}
+		}
+		hits.sort((a, b) => b.score - a.score || b.at - a.at);
+		return hits.slice(0, limit).map((hit) => ({ id: hit.id, name: hit.name, text: hit.text, at: hit.at }));
+	}
+
 	stats() {
 		const users = Object.keys(this.data.users).length;
 		const notes = Object.values(this.data.users).reduce((sum, user) => sum + user.notes.length, 0);

@@ -36,6 +36,8 @@ export default {
 		'- Music: you can play music yourself (play_music: a song name or a link), stop/pause/resume/skip (stop_music, pause_music, resume_music, skip_music),',
 		'  volume (set_music_volume, a percentage) and "what is playing" (music_status). While music is playing it ducks by itself when you speak and comes back up when you stop; you do not have to do anything for that.',
 		'- Memory: if something worth keeping in mind about somebody is said, take a note with remember_note; if you are asked what you know about somebody, recall_notes; if they say "forget it", forget_note.',
+		'  Save a lasting preference the moment it is said ("my favourite song is X", "call me Y") without being asked to.',
+		'  Before saying you do not remember something, call recall_notes with search: it looks through every saved note, not just theirs.',
 		'- Summary: for requests such as "what was talked about today", summarize_conversation.',
 		'- Up-to-date information: web research.',
 		'You run in a voice channel, so you cannot see images: if somebody says "I posted a photo", say "send it to me in text and I will take a look there".',

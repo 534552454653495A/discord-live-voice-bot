@@ -1,5 +1,7 @@
 // Strings for src/tools/memory.js (en). Referenced as "tools.memory.<key>".
 export default {
+	search_empty: 'I have nothing saved about "{query}".',
+	search_hits: 'Here is what I have: {notes}.',
 	disabled: 'Memory is turned off (.env: MEMORY=1).',
 	no_target_remember: 'I could not work out who to take a note about.',
 	empty_note: 'The note looks empty.',
