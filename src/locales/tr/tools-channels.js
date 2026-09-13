@@ -1,5 +1,16 @@
 // Strings for src/tools/channels.js (tr). Referenced as "tools.channels.<key>".
 export default {
+	category_not_found: '"{name}" diye bir kategori bulamadım.',
+	not_a_category: '"{name}" bir kategori değil, kanalı onun içine taşıyamam.',
+	category_has_no_parent: '{channel} zaten bir kategori; kategori başka bir kategorinin içine girmez.',
+	no_category_to_sync: '{channel} bir kategoride değil, uyacak kategori yetkisi yok.',
+	part_renamed: 'adı {name} oldu',
+	part_moved: '{category} kategorisine taşındı',
+	part_detached: 'kategoriden çıkarıldı',
+	part_positioned: '{position}. sıraya alındı',
+	part_synced: 'artık {category} kategorisinin yetkilerini kullanıyor',
+	edited_details: '#{channel} kanalını güncelledim: {details}.',
+	list_with_categories: 'Metin kanalları: {text}. Sesli kanallar: {voice}. Kategoriler: {categories}.',
 	not_found: '"{name}" kanalını bulamadım.',
 	default_name: 'yeni-kanal',
 	created: '#{channel} kanalını açtım.',

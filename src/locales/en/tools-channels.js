@@ -1,5 +1,16 @@
 // Strings for src/tools/channels.js (en). Referenced as "tools.channels.<key>".
 export default {
+	category_not_found: 'I could not find a category called "{name}".',
+	not_a_category: '"{name}" is not a category, so I cannot move a channel into it.',
+	category_has_no_parent: '{channel} is a category itself; a category cannot sit inside another one.',
+	no_category_to_sync: '{channel} is not inside a category, so there are no category permissions to follow.',
+	part_renamed: 'renamed to {name}',
+	part_moved: 'moved into {category}',
+	part_detached: 'moved out of its category',
+	part_positioned: 'moved to position {position}',
+	part_synced: 'now follows the permissions of {category}',
+	edited_details: 'I updated #{channel}: {details}.',
+	list_with_categories: 'Text channels: {text}. Voice channels: {voice}. Categories: {categories}.',
 	not_found: 'I could not find the "{name}" channel.',
 	default_name: 'new-channel',
 	created: 'I created the #{channel} channel.',

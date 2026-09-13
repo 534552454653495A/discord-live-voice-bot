@@ -66,8 +66,19 @@ export function pickRelativeVoiceChannel(guild, currentChannel, direction = 'dow
 }
 
 // Spoken words for a relative channel target, and the subset of them that means "upwards".
-const RELATIVE_TARGET_RE = new RegExp(`^(?:${tList('keywords.relative_target_words').join('|')})$`, 'i');
-const RELATIVE_UP_RE = new RegExp(`(?:${tList('keywords.relative_up_words').join('|')})`, 'i');
+// The tool schemas are written in English, so the model often hands back an English phrase even while the
+// conversation is in another language ("the room below" for "alt kanal"). Both vocabularies are accepted.
+function relativeWords(key) {
+	const active = tList(`keywords.${key}`);
+	const english = tList(`keywords.${key}`, null, 'en');
+	return [...new Set([...active, ...english])].map((word) => word.replaceAll('|', String.raw`\|`));
+}
+
+const RELATIVE_TARGET_RE = new RegExp(
+	String.raw`^(?:the\s+)?(?:room\s+|channel\s+)?(?:` + relativeWords('relative_target_words').join('|') + String.raw`)(?:\s+(?:room|channel|one))?$`,
+	'i',
+);
+const RELATIVE_UP_RE = new RegExp(`(?:${relativeWords('relative_up_words').join('|')})`, 'i');
 
 export function isRelativeTarget(text) {
 	return RELATIVE_TARGET_RE.test(String(text ?? '').trim());

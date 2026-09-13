@@ -81,9 +81,13 @@ export function t(key, params = null) {
 	return String(key);
 }
 
-/** Translated list (keyword tables, note lines, help entries). Always a fresh array. */
-export function tList(key, params = null) {
-	const value = resolve(key);
+/**
+ * Translated list (keyword tables, note lines, help entries). Always a fresh array.
+ * `code` reads a specific locale instead of the active one -- used where a value may arrive in English
+ * because the model-facing schema is English, whatever language the conversation is in.
+ */
+export function tList(key, params = null, code = null) {
+	const value = code ? (lookup(BUNDLES[code] ?? {}, key) ?? lookup(BUNDLES[FALLBACK], key)) : resolve(key);
 	if (typeof value === 'function') {
 		const produced = value(params ?? {});
 		return Array.isArray(produced) ? [...produced] : [];

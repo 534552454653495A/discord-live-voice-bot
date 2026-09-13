@@ -4,6 +4,8 @@
 // permission vocabularies, colour names and audit-log labels. The gate compares these words against
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
+	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).
+	no_category_words: ['none', 'no category', 'nowhere', 'root', 'top level', 'uncategorised', 'uncategorized', 'outside'],
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
 	bool_true: ['ok', 'okay', 'yep', 'yeah', 'active', 'up'],
 	bool_false: ['nope', 'nah', 'inactive', 'stop', 'down'],

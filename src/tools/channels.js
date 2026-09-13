@@ -21,8 +21,8 @@ import {
 	trDate,
 	voiceChannels,
 } from './helpers.js';
+import { t, tList } from '../i18n/index.js';
 import { normalize } from '../text.js';
-import { t } from '../i18n/index.js';
 import { P, defineTool } from './registry.js';
 
 /** Channel permission target: everyone (@everyone), a role or a single person. */
@@ -59,6 +59,22 @@ async function resolvePermissionTarget(deps, rawTarget, kind) {
 	}
 	if (found?.member) return asMember(found.member, false);
 	return null;
+}
+
+/**
+ * Resolves the `parent` argument of edit_channel: a category, or an explicit "no category".
+ * @returns {{ parent: object|null }|{ error: string }|null} null = the argument was not given
+ */
+function resolveParentArgument(deps, raw) {
+	if (raw === undefined || raw === null) return null;
+	const text = String(raw).trim();
+	if (!text) return null;
+	const key = normalize(text);
+	if (!key || tList('keywords.no_category_words').includes(key)) return { parent: null };
+	const found = resolveAnyChannel(deps, text);
+	if (!found) return { error: t('tools.channels.category_not_found', { name: text }) };
+	if (found.type !== ChannelType.GuildCategory) return { error: t('tools.channels.not_a_category', { name: found.name }) };
+	return { parent: found };
 }
 
 export const tools = [
@@ -102,15 +118,22 @@ export const tools = [
 
 	defineTool({
 		name: 'edit_channel',
-		description: 'Edits a channel: name, topic, slowmode, user limit, NSFW. Owner only.',
+		description:
+			'Edits a channel or a category: rename it, change its topic, slowmode, user limit or NSFW flag, move it into ' +
+			'another category (parent), reorder it (position), or make it inherit the category permissions ' +
+			'(sync_permissions). Use this for "move this channel under that category", "drag it to the top" and ' +
+			'"rename the channel". Owner only.',
 		parameters: P.obj(
 			{
-				channel: P.str('Channel name'),
+				channel: P.str('Channel or category name'),
 				name: P.str('New name'),
 				topic: P.str('New topic'),
 				slowmode_seconds: P.int('Slowmode (seconds; 0 = off)'),
 				user_limit: P.int('User limit in a voice channel (0 = unlimited)'),
 				nsfw: P.bool('NSFW flag'),
+				parent: P.str('Category to move the channel into; a word meaning "none" moves it out of every category'),
+				position: P.int('New position inside the category: 0 puts it first, a large number such as 99 puts it last'),
+				sync_permissions: P.bool('true = drop the channel\'s own permissions and follow its category'),
 			},
 			['channel'],
 		),
@@ -128,11 +151,52 @@ export const tools = [
 				patch.userLimit = Math.max(0, Math.min(99, Math.round(Number(args.user_limit))));
 			}
 			if (typeof args.nsfw === 'boolean') patch.nsfw = args.nsfw;
-			if (!Object.keys(patch).length) return { ok: false, spoken: t('tools.channels.nothing_to_change') };
+
+			const parentArg = resolveParentArgument(deps, args.parent);
+			if (parentArg?.error) return { ok: false, spoken: parentArg.error };
+			if (parentArg && channel.type === ChannelType.GuildCategory) {
+				return { ok: false, spoken: t('tools.channels.category_has_no_parent', { channel: channel.name }) };
+			}
+			const position = Number.isFinite(Number(args.position)) ? Math.max(0, Math.round(Number(args.position))) : null;
+			const sync = args.sync_permissions === true;
+			if (!Object.keys(patch).length && !parentArg && position === null && !sync) {
+				return { ok: false, spoken: t('tools.channels.nothing_to_change') };
+			}
+			const reason = t('tools.helpers.audit_reason');
+			const done = [];
 			try {
-				await channel.edit({ ...patch, reason: t('tools.helpers.audit_reason') });
-				deps.log?.(t('tools.channels.log_edited', { channel: channel.name }));
-				return { ok: true, spoken: t('tools.channels.edited', { channel: channel.name }), data: { id: channel.id, changes: patch } };
+				if (Object.keys(patch).length) {
+					await channel.edit({ ...patch, reason });
+					if (patch.name) done.push(t('tools.channels.part_renamed', { name: patch.name }));
+				}
+				// Moving and reordering are their own endpoints in Discord, so they are applied separately;
+				// setParent carries the "inherit the category permissions" flag with it.
+				if (parentArg) {
+					await channel.setParent(parentArg.parent, { lockPermissions: sync, reason });
+					done.push(
+						parentArg.parent
+							? t('tools.channels.part_moved', { category: parentArg.parent.name })
+							: t('tools.channels.part_detached'),
+					);
+				}
+				if (position !== null) {
+					await channel.setPosition(position, { reason });
+					done.push(t('tools.channels.part_positioned', { position }));
+				}
+				if (sync && !parentArg) {
+					if (!channel.parent) return { ok: false, spoken: t('tools.channels.no_category_to_sync', { channel: channel.name }) };
+					await channel.lockPermissions();
+					done.push(t('tools.channels.part_synced', { category: channel.parent.name }));
+				}
+				const summary = done.length ? `${channel.name}: ${done.join(', ')}` : channel.name;
+				deps.log?.(t('tools.channels.log_edited', { channel: summary }));
+				return {
+					ok: true,
+					spoken: done.length
+						? t('tools.channels.edited_details', { channel: channel.name, details: done.join(', ') })
+						: t('tools.channels.edited', { channel: channel.name }),
+					data: { id: channel.id, changes: patch, parent: parentArg ? (parentArg.parent?.name ?? null) : undefined, position, synced: sync },
+				};
 			} catch (err) {
 				return failure(deps, 'channel edit failed', err, t('tools.channels.edit_failed'));
 			}
@@ -349,14 +413,30 @@ export const tools = [
 
 	defineTool({
 		name: 'list_channels',
-		description: 'Lists the text and voice channels on the server.',
+		description: 'Lists the categories, text channels and voice channels on the server, and which category each one sits in.',
 		async handler(args, deps) {
 			const text = textChannels(deps).map((c) => c.name);
 			const voice = voiceChannels(deps).map((c) => c.name);
+			const categories = [...deps.guild.channels.cache.values()]
+				.filter((c) => c.type === ChannelType.GuildCategory)
+				.sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0))
+				.map((category) => ({
+					name: category.name,
+					channels: [...deps.guild.channels.cache.values()]
+						.filter((c) => c.parentId === category.id)
+						.sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0))
+						.map((c) => c.name),
+				}));
 			return {
 				ok: true,
-				spoken: t('tools.channels.list', { text: text.join(', '), voice: voice.join(', ') }),
-				data: { text, voice },
+				spoken: categories.length
+					? t('tools.channels.list_with_categories', {
+							text: text.join(', '),
+							voice: voice.join(', '),
+							categories: categories.map((c) => `${c.name} (${c.channels.join(', ') || '-'})`).join('; '),
+						})
+					: t('tools.channels.list', { text: text.join(', '), voice: voice.join(', ') }),
+				data: { text, voice, categories },
 			};
 		},
 	}),

@@ -26,6 +26,8 @@ export default {
 		'- Members: moving somebody to another voice channel (move_member, owner), seeing their roles and what they are listening to (member_roles, member_activity), sending a DM (send_dm), membership details (user_info).',
 		'- Channel management: creating a channel, editing it (name/topic/slow mode/limit), deleting it, locking it (create_channel, edit_channel, delete_channel, lock_channel),',
 		'  channel permissions: turning permissions such as view/connect/speak/write on and off for a role, a person or everyone, "only the X role may come in" (set_channel_permission).',
+	'  Categories are channels too: create one with create_channel(type:"category"), and edit_channel moves a channel into a category (parent),',
+	'  reorders it (position), renames it (name) or makes it inherit the category permissions (sync_permissions). list_channels shows which category each channel is in.',
 		'- Role management: creating a role, editing it (colour included), deleting it, giving a role to a member or taking it away (create_role, edit_role, delete_role, grant_role, revoke_role).',
 		'  A colour can be given as a name such as "red" or as "#ff8800"; there is also nickname changing (set_nickname).',
 		'- Silencing: giving and lifting a timeout (timeout_member, untimeout_member) and muting the microphone/headset in a voice channel (voice_mute).',

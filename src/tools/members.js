@@ -259,7 +259,10 @@ export const tools = [
 
 	defineTool({
 		name: 'voice_mute',
-		description: 'Server-mutes or server-deafens a member in a voice channel, or undoes it. Owner only.',
+		description:
+			'Server-mutes or server-deafens a member who is in a voice channel, or undoes it. This silences them but leaves ' +
+			'them in the channel; use voice_disconnect to throw them out of the voice channel, and kick_member to remove them ' +
+			'from the server. Owner only.',
 		parameters: P.obj(
 			{
 				member: P.str('Person name'),
@@ -280,7 +283,8 @@ export const tools = [
 			const deafen = typeof args.deafen === 'boolean' ? args.deafen : undefined;
 			try {
 				await member.voice.setMute(mute, t('tools.helpers.audit_reason'));
-				if (deafen !== undefined) await member.voice.setDeafen(deafen, t('tools.helpers.audit_reason'));
+				// discord.js names this setDeaf (not setDeafen); calling the wrong one threw and the whole tool failed.
+				if (deafen !== undefined) await member.voice.setDeaf(deafen, t('tools.helpers.audit_reason'));
 				deps.log?.(t(mute ? 'tools.members.log_muted' : 'tools.members.log_unmuted', { who: member.displayName }));
 				return {
 					ok: true,
@@ -289,6 +293,36 @@ export const tools = [
 				};
 			} catch (err) {
 				return failure(deps, 'voice state unchanged', err, t('tools.members.voice_state_failed'));
+			}
+		},
+	}),
+
+	defineTool({
+		name: 'voice_disconnect',
+		description:
+			'Throws a member OUT OF THE VOICE CHANNEL (disconnects them). They stay in the server and can come back; this is ' +
+			'not a kick. For removing somebody from the server use kick_member, and to silence them without moving them use ' +
+			'voice_mute. Owner only.',
+		parameters: P.obj({ member: P.str('Person name'), reason: P.str('Reason (optional)') }, ['member']),
+		gate: { keywords: WORDS.voice },
+		async handler(args, deps) {
+			const member = await findMember(deps, String(args.member ?? ''));
+			if (!member) return { ok: false, spoken: t('tools.members.member_not_found', { name: args.member }) };
+			const channel = member.voice?.channel ?? null;
+			if (!member.voice || !(member.voice.channelId ?? channel)) {
+				return { ok: false, spoken: t('tools.members.not_in_voice', { who: displayName(member) }) };
+			}
+			try {
+				// Setting the voice channel to null is what "disconnect" means in the Discord API.
+				await member.voice.setChannel(null, args.reason ? String(args.reason).slice(0, 400) : t('tools.helpers.audit_reason'));
+				deps.log?.(t('tools.members.log_disconnected', { who: displayName(member), channel: channel?.name ?? '?' }));
+				return {
+					ok: true,
+					spoken: t('tools.members.disconnected', { who: displayName(member), channel: channel?.name ?? '?' }),
+					data: { id: member.id, from: channel?.name ?? null },
+				};
+			} catch (err) {
+				return failure(deps, 'voice disconnect failed', err, t('tools.members.disconnect_failed'));
 			}
 		},
 	}),

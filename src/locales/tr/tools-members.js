@@ -1,5 +1,8 @@
 // Strings for src/tools/members.js (tr). Referenced as "tools.members.<key>".
 export default {
+	disconnected: '{who} kişisini {channel} kanalından attım. Sunucuda kalmaya devam ediyor.',
+	disconnect_failed: 'Onu sesli kanaldan atamadım',
+	log_disconnected: '[araç] {who} sesten atıldı ({channel})',
 	member_not_found: '"{name}" diye birini bulamadım.',
 	that_person: 'O kişi',
 	none: 'yok',

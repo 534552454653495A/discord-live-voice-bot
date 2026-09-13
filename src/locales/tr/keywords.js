@@ -4,6 +4,8 @@
 // permission vocabularies, colour names and audit-log labels. The gate compares these words against
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
+	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).
+	no_category_words: ['yok', 'kategorisiz', 'hicbiri', 'kategori disi', 'disari', 'en ust', 'ust seviye', 'bagimsiz'],
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
 	bool_true: ['evet', 'acik', 'açık', 'ac', 'aç', 'aktif', 'tamam', 'olur'],
 	bool_false: ['hayir', 'hayır', 'kapali', 'kapalı', 'kapat', 'kapa', 'pasif', 'yok'],

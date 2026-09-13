@@ -84,7 +84,7 @@ export const tools = [
 
 	defineTool({
 		name: 'kick_member',
-		description: 'Kicks a member from the server. Owner only.',
+		description: 'Removes a member FROM THE SERVER (kick). They can rejoin with a new invite. This is not the same as throwing them out of a voice channel -- for that use voice_disconnect. Owner only; asks for confirmation when the name is not an exact match.',
 		parameters: P.obj({ member: P.str('Member name'), reason: P.str('Reason (optional)'), confirm: P.confirm() }, ['member']),
 		gate: { keywords: WORDS.kick },
 		async handler(args, deps, { name }) {
