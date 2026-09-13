@@ -1,0 +1,126 @@
+// Pure text helpers: no dependency on Discord, and nothing beyond the locale tables.
+// (normalize/findCharacter/findChannelByName/stripDictationTail used to live in commands.js and
+//  balanceCodeFences in messages.js; they moved here so the layering points the right way.
+//  The old locations re-export them for backwards compatibility.)
+
+import { tList, tRaw } from './i18n/index.js';
+
+// Turkish letters -> ASCII. Language data, kept in every language: the bot still has to match
+// Turkish speech and Turkish channel/role names when it runs in English.
+
+const TR_MAP = { ç: 'c', Ç: 'c', ğ: 'g', Ğ: 'g', ı: 'i', I: 'i', İ: 'i', ö: 'o', Ö: 'o', ş: 's', Ş: 's', ü: 'u', Ü: 'u' };
+
+// Fancy letters that are common in Discord role/channel names (like ᴄʜɪʟʟ).
+const SMALL_CAPS = {
+	ᴀ: 'a', ʙ: 'b', ᴄ: 'c', ᴅ: 'd', ᴇ: 'e', ꜰ: 'f', ɢ: 'g', ʜ: 'h', ɪ: 'i', ᴊ: 'j', ᴋ: 'k', ʟ: 'l',
+	ᴍ: 'm', ɴ: 'n', ᴏ: 'o', ᴘ: 'p', ꞯ: 'q', ʀ: 'r', ꜱ: 's', ᴛ: 't', ᴜ: 'u', ᴠ: 'v', ᴡ: 'w',
+	ʏ: 'y', ᴢ: 'z',
+};
+
+/** Comparison key: strips accents/Turkish letters/suffixes, lower-cases, keeps only [a-z0-9 ]. */
+export function normalize(text) {
+	return String(text ?? '')
+		// drop the suffix glued on after an apostrophe ("Ali'ye", "Sangul'ento") so the name core survives
+		.replace(/['’]\s*[a-zçğıöşü]{1,4}(?![\p{L}])/giu, ' ')
+		.normalize('NFKD') // 𝓒𝓱𝓲𝓵𝓵 / Ｃｈｉｌｌ -> Chill; a c-cedilla becomes c + a combining mark
+		.replace(/[̀-ͯ]/g, '') // drop accents/combining marks
+		.replace(/[ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘꞯʀꜱᴛᴜᴠᴡʏᴢ]/g, (ch) => SMALL_CAPS[ch] ?? ch)
+		.replace(/[çÇğĞıIİöÖşŞüÜ]/g, (ch) => TR_MAP[ch] ?? ch)
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim();
+}
+
+/** Collapses whitespace and trims (a pattern repeated everywhere). */
+export function squash(text) {
+	return String(text ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Character name -> character. Four stages: exact, prefix, contains, reverse-contains.
+ * Reverse-contains (the search text contains the character name) is limited to names of 3+ letters;
+ * otherwise a character called "A" matches every sentence.
+ */
+export function findCharacter(characters, name) {
+	const needle = normalize(name);
+	if (!needle) return null;
+	const normalized = (characters ?? []).map((c) => ({ character: c, key: normalize(c.name) }));
+	return (
+		normalized.find((entry) => entry.key === needle)?.character ??
+		normalized.find((entry) => entry.key.startsWith(needle))?.character ??
+		normalized.find((entry) => entry.key.includes(needle))?.character ??
+		normalized.find((entry) => entry.key.length > 2 && needle.includes(entry.key))?.character ??
+		null
+	);
+}
+
+/** Channel name -> channel (loose matching; the transcript can be mangled). */
+export function findChannelByName(channels, name) {
+	const needle = normalize(name);
+	if (!needle) return null;
+	const keyed = (channels ?? []).map((channel) => ({ channel, key: normalize(channel.name) }));
+	return (
+		keyed.find((entry) => entry.key === needle)?.channel ??
+		keyed.find((entry) => entry.key.startsWith(needle))?.channel ??
+		keyed.find((entry) => entry.key.includes(needle))?.channel ??
+		keyed.find((entry) => needle.includes(entry.key) && entry.key.length > 2)?.channel ??
+		null
+	);
+}
+
+/**
+ * Strips the dictation tail: when a message is dictated ("tell them to join the voice channel"), the
+ * message itself is only the quoted part, and the quoting particle at the end must not end up in it.
+ * The particles are language data and come from the active locale (grammar.dictation_tail). Very short
+ * messages (2 words or fewer) are left alone, and wrapping quotes are dropped.
+ */
+export function stripDictationTail(text) {
+	let out = String(text ?? '').trim();
+	out = out.replace(/^["'“”«»](.*)["'“”«»]$/su, '$1').trim();
+	const pattern = tRaw('grammar.dictation_tail');
+	if (!pattern) return out;
+	const tail = new RegExp(pattern, 'iu');
+	for (let pass = 0; pass < 3; pass++) {
+		if (out.split(/\s+/).filter(Boolean).length < 3) break;
+		const next = out.replace(tail, '').trim();
+		if (next === out || !next) break;
+		out = next;
+	}
+	return out;
+}
+
+/**
+ * Closes an unclosed code fence: on Discord a single stray ``` turns everything after it into a code block.
+ * When `maxLength` is given it trims first and balances afterwards (so the closing fence is not lost to the trim).
+ */
+export function balanceCodeFences(text, { maxLength = null } = {}) {
+	let value = String(text ?? '');
+	if (maxLength && value.length > maxLength) value = value.slice(0, maxLength - 4).trimEnd();
+	const fences = value.match(/```/g)?.length ?? 0;
+	if (fences % 2 === 0) return value;
+	return `${value}\n\`\`\``;
+}
+
+/** HTML escaping (so user data does not reach innerHTML in places like the panel). */
+export function escapeHtml(text) {
+	return String(text ?? '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
+/** "1", "yes", "on" and their Turkish equivalents -> true; "0", "no", "off" and theirs -> false; otherwise fallback. */
+export function parseBool(value, fallback = false) {
+	if (typeof value === 'boolean') return value;
+	if (value === undefined || value === null) return fallback;
+	const text = String(value).trim().toLowerCase();
+	if (!text) return fallback;
+	// Universal spellings first, then the ones people actually say in the active language.
+	if (/^(?:1|true|yes|on|open|enable|enabled)$/i.test(text)) return true;
+	if (/^(?:0|false|no|off|close|closed|disable|disabled)$/i.test(text)) return false;
+	if (tList('keywords.bool_true').includes(text)) return true;
+	if (tList('keywords.bool_false').includes(text)) return false;
+	return fallback;
+}

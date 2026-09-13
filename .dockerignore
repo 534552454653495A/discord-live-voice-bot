@@ -1,0 +1,12 @@
+node_modules
+.venv-chatterbox
+.venv*
+.git
+data/*
+!data/.gitkeep
+tools/bin
+test
+scripts
+.env
+.env.*
+*.md

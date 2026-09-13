@@ -1,0 +1,26 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Runtime data: personal transcripts, DM logs, per-person notes, the active persona and test audio.
+# None of it belongs in the repository; only the example persona is tracked.
+data/*
+!data/characters.example.json
+!data/.gitkeep
+
+# local Python environment and model caches
+.venv-chatterbox/
+.venv*/
+__pycache__/
+*.pyc
+
+# downloaded binary tools
+tools/bin/
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,505 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { callTool, resetDmLimiter, toolDefinitions, toolMeta, toolOutput } from '../../src/tools.js';
+import { ChannelReader } from '../../src/reader.js';
+import { RecentActions } from '../../src/commands.js';
+import { SpeakerAttribution } from '../../src/attribution.js';
+import { parsePermissions } from '../../src/tools/helpers.js';
+
+function makeDeps({ owner = false } = {}) {
+	const sent = [];
+	const channel = {
+		id: '10',
+		name: 'chat',
+		type: ChannelType.GuildText,
+		send: async (payload) => (sent.push(payload), { id: 'm1' }),
+		messages: { fetch: async () => new Map() },
+		permissionOverwrites: {
+			edit: async (target, patch) => sent.push({ overwrite: patch, target: target?.id ?? target }),
+			delete: async (id) => sent.push({ deleted: id }),
+		},
+	};
+	const voiceChannel = {
+		id: 'v1',
+		name: 'General',
+		type: ChannelType.GuildVoice,
+		permissionOverwrites: {
+			edit: async (target, patch) => sent.push({ overwrite: patch, target: target?.id ?? target }),
+			delete: async (id) => sent.push({ deleted: id }),
+		},
+	};
+	const guild = {
+		channels: { cache: new Map([['10', channel], ['v1', voiceChannel]]) },
+		voiceStates: { cache: new Map() },
+		members: {
+			cache: new Map([
+				['1', { id: '1', displayName: 'Jane Doe', user: { username: 'jane', bot: false }, send: async (p) => sent.push({ dm: p.content }), kickable: true, kick: async () => sent.push({ kick: '1' }), voice: { channelId: 'v1', channel: voiceChannel, setChannel: async (c) => sent.push({ moved: c.name }) } }],
+			]),
+			fetch: async () => new Map(),
+		},
+		roles: { cache: new Map([['r1', { id: 'r1', name: 'chillz', position: 2, managed: false, editable: true }]]), everyone: { id: 'everyone' } },
+		emojis: { cache: new Map() },
+		stickers: { cache: new Map(), fetch: async () => {} },
+	};
+	const deps = {
+		guild,
+		cfg: { textChannelId: null, readLimit: 5, dmPerMinute: 10, dmPerTargetPerMinute: 2 },
+		log: () => {},
+		activity: () => {},
+		reader: new ChannelReader(),
+		recentActions: new RecentActions(),
+		store: { list: () => [], getActive: () => null, setActive: async () => true },
+		joinVoice: async (c) => sent.push({ joined: c.name }),
+		leaveVoice: async () => {},
+		currentSpeakerChannel: () => null,
+		refreshPersona: async () => {},
+	};
+	if (owner) {
+		deps.isOwnerActive = () => true;
+		deps.ownerSaidRecently = () => true;
+		deps.ownerMatch = (words) => words[0];
+	}
+	return { deps, sent, guild, channel };
+}
+
+describe('tool registry', () => {
+	it('keeps the schemas and the meta table in step, and every gated tool refuses without an owner', async () => {
+		const meta = toolMeta();
+		const defs = toolDefinitions();
+		assert.equal(new Set(defs.map((d) => d.name)).size, defs.length, 'tool names are unique');
+		const gated = meta.filter((m) => m.gated).map((m) => m.name);
+		assert.ok(gated.includes('ban_member') && gated.includes('move_member') && gated.includes('lock_channel'));
+		assert.ok(!gated.includes('play_music') && !gated.includes('send_dm'));
+		for (const name of gated) {
+			const { deps } = makeDeps();
+			const result = await callTool(name, {}, deps);
+			assert.equal(result.ok, false, name);
+			assert.equal(result.denied, true, `${name} must come back refused by the gate`);
+		}
+	});
+
+	it('reports an unknown tool and packs a result into the toolOutput shape', async () => {
+		const { deps } = makeDeps();
+		assert.equal((await callTool('no_such_tool', {}, deps)).ok, false);
+		const out = JSON.parse(toolOutput({ ok: false, spoken: 'question', needs_confirmation: true, error: 'x' }));
+		assert.deepEqual(out, { ok: false, summary: 'question', needs_confirmation: true, error: 'x' });
+	});
+});
+
+describe('owner gate: who said the command', () => {
+	function withAttribution(deps, clock) {
+		const attribution = new SpeakerAttribution({ ownerId: 'o', now: () => clock.now });
+		deps.isOwnerActive = () => attribution.isOwnerActive();
+		deps.ownerMatch = (words, ms) => attribution.ownerMatch(words, ms);
+		deps.ownerSaidRecently = (words, ms) => attribution.ownerSaidRecently(words, ms);
+		deps.commandSpeaker = (words, opts) => attribution.commandSpeaker(words, opts);
+		deps.lastUtterance = (opts) => attribution.lastUtterance(opts);
+		deps.transcriptLagging = (opts) => attribution.transcriptLagging(opts);
+		deps.nameFor = (id) => (id === 'z' ? 'Sam' : id);
+		deps.awaitTranscript = async () => {};
+		return attribution;
+	}
+	const frames = (a, n, frame) => {
+		for (let i = 0; i < n; i++) a.onFrame(frame);
+	};
+
+	it('someone cutting in while the backend works does not drop the command the owner gave', async () => {
+		const { deps, sent } = makeDeps();
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 50, { priority: true, active: ['o'] });
+		a.noteTranscript('move Jane to General', { startMs: 0, endMs: 1000 });
+		a.markTurn(); // the backend started working on it
+		clock.now += 4000;
+		frames(a, 20, { priority: false, active: ['z'] }); // Sam: "sorry what was that"
+		a.noteTranscript('sorry what was that', { startMs: 1000, endMs: 1400 });
+		assert.equal(a.isOwnerActive(), false, 'at frame level Sam spoke last (the old gate would have refused)');
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { moved: 'General' });
+	});
+
+	it('refuses a request from someone else, whether it leans on the owner\'s earlier keyword or repeats it', async () => {
+		const { deps, sent } = makeDeps();
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 30, { priority: true, active: ['o'] });
+		a.noteTranscript('move Alex over', { startMs: 0, endMs: 600 });
+		a.markTurn();
+		clock.now += 5000;
+		frames(a, 20, { priority: false, active: ['z'] });
+		a.noteTranscript('me too', { startMs: 600, endMs: 1000 }); // a request without the keyword, from somebody else
+		a.markTurn(); // the model is answering Sam
+		let result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.denied, true);
+		assert.match(result.spoken, /Somebody else cut in/);
+		assert.ok(!sent.some((s) => s.moved), 'nobody may be moved');
+
+		clock.now += 2000;
+		frames(a, 20, { priority: false, active: ['z'] });
+		a.noteTranscript('move Jane to General', { startMs: 1000, endMs: 1400 });
+		a.markTurn();
+		result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.denied, true);
+		assert.match(result.spoken, /Only the bot owner/);
+		assert.ok(!sent.some((s) => s.moved));
+	});
+
+	it('pins the turn to the moment of the request, so a later word from the owner cannot authorise someone else', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 30, { priority: true, active: ['o'] });
+		a.noteTranscript('move Alex over', { startMs: 0, endMs: 600 }); // the owner's EARLIER (finished) request
+		a.markTurn();
+		clock.now += 3000;
+		frames(a, 20, { priority: false, active: ['z'] });
+		a.noteTranscript('me too', { startMs: 600, endMs: 1000 }); // Sam is asking, without saying the keyword
+		const samTurn = a.markTurn(); // the brain started working on Sam's request
+		clock.now += 4000;
+		frames(a, 20, { priority: true, active: ['o'] });
+		a.noteTranscript('all right', { startMs: 1000, endMs: 1400 }); // the owner threw in a remark
+		a.markTurn();
+
+		// Without the pin (the old behaviour) the owner's remark would have authorised Sam's request.
+		assert.equal((await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps)).ok, true);
+		sent.length = 0;
+
+		deps.currentTurn = () => samTurn; // the moment the request was born
+		const pinned = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(pinned.denied, true, pinned.spoken);
+		assert.ok(!sent.some((s) => s.moved), "Sam's request must not be carried out");
+	});
+
+	it('keeps the pinned turn while it waits for the transcript', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 20, { priority: false, active: ['z'] });
+		a.noteTranscript('move Jane', { startMs: 0, endMs: 400 }); // Sam asked for it
+		const samTurn = a.markTurn();
+		deps.currentTurn = () => samTurn;
+		deps.awaitTranscript = async () => {
+			// While we wait the owner speaks and a new turn opens
+			clock.now += 500;
+			frames(a, 20, { priority: true, active: ['o'] });
+			a.noteTranscript('move Jane', { startMs: 400, endMs: 800 });
+			a.markTurn();
+		};
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.denied, true, result.spoken);
+		assert.ok(!sent.some((s) => s.moved));
+	});
+
+	it('refuses rather than deciding on an older command when the transcript never arrives', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 30, { priority: true, active: ['o'] });
+		a.noteTranscript('move Jane to General', { startMs: 0, endMs: 600 }); // an earlier, finished request
+		clock.now += 5000;
+		frames(a, 300, { priority: false, active: ['z'] }); // six seconds of someone else, never transcribed
+		a.markTurn();
+		deps.awaitTranscript = async () => {}; // the transcript still does not turn up
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.denied, true, result.spoken);
+		assert.ok(!sent.some((entry) => entry.moved), 'nothing is moved on a stale command');
+	});
+
+	it('waits a moment for a late transcript before deciding', async () => {
+		const { deps, sent } = makeDeps();
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 50, { priority: true, active: ['o'] });
+		a.markTurn();
+		let waited = 0;
+		deps.awaitTranscript = async () => {
+			waited++;
+			a.noteTranscript('move Jane to General', { startMs: 0, endMs: 1000 });
+		};
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(waited, 1, 'the gate has to wait for the transcript');
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { moved: 'General' });
+	});
+});
+
+describe('parsePermissions', () => {
+	it('prefers the suffixed form of a real alias over a longer, stronger permission', () => {
+		// "messages" used to reach the "manage messages" alias and hand out moderation rights.
+		assert.deepEqual(parsePermissions(['messages']).flags, ['SendMessages']);
+		assert.deepEqual(parsePermissions(['connectable']).flags, ['Connect']);
+	});
+
+	it('refuses a bare word that only matches a multi-word permission', () => {
+		const result = parsePermissions(['channel']);
+		assert.deepEqual(result.flags, [], 'a bare "channel" must not become Manage Channels');
+		assert.deepEqual(result.unknown, ['channel']);
+		assert.deepEqual(parsePermissions(['manage channels']).flags, ['ManageChannels'], 'the explicit phrase still works');
+	});
+
+	it('expands a group, including a suffixed spelling of it', () => {
+		const expected = ['ViewChannel', 'Connect', 'SendMessages'];
+		assert.deepEqual(parsePermissions(['access']).flags, expected);
+		assert.deepEqual(parsePermissions(['accessible']).flags, expected);
+	});
+
+	it('splits a single string that names several permissions', () => {
+		assert.deepEqual(parsePermissions(['view and connect']).flags, ['ViewChannel', 'Connect']);
+		assert.deepEqual(parsePermissions('connect, view').flags, ['Connect', 'ViewChannel']);
+	});
+
+	it('reports an inherited object key as unknown instead of throwing', () => {
+		const result = parsePermissions(['constructor', 'toString']);
+		assert.deepEqual(result.flags, []);
+		assert.deepEqual(result.unknown, ['constructor', 'toString']);
+	});
+});
+
+describe('set_channel_permission: exclusive access', () => {
+	it('keeps its own access before closing the channel for everyone', async () => {
+		const { deps, sent, guild } = makeDeps({ owner: true });
+		// A bot with Manage Roles but no Administrator: the case where the order actually matters, because
+		// denying ViewChannel for @everyone would otherwise take the bot's own access away mid-operation.
+		const notAdmin = { has: (bit) => bit !== PermissionFlagsBits.Administrator };
+		guild.members.me = { id: 'bot', permissions: notAdmin };
+		const voice = guild.channels.cache.get('v1');
+		voice.permissionsFor = () => notAdmin;
+		const result = await callTool(
+			'set_channel_permission',
+			{ channel: 'General', target: 'chillz', allow: ['connect', 'view'], only: true },
+			deps,
+		);
+		assert.equal(result.ok, true, result.spoken);
+		const order = sent.filter((entry) => entry.overwrite).map((entry) => entry.target);
+		assert.deepEqual(order, ['bot', 'r1', 'everyone'], 'the bot keeps access first, everyone is closed last');
+		const byTarget = Object.fromEntries(sent.filter((e) => e.overwrite).map((e) => [e.target, e.overwrite]));
+		assert.deepEqual(byTarget.bot, { Connect: true, ViewChannel: true });
+		assert.deepEqual(byTarget.everyone, { Connect: false, ViewChannel: false });
+	});
+
+	it('prefers an exact member over a role that only matches loosely', async () => {
+		const { deps, sent, guild } = makeDeps({ owner: true });
+		guild.roles.cache.set('r2', { id: 'r2', name: 'Janitor', position: 1, managed: false, editable: true });
+		const result = await callTool('set_channel_permission', { channel: 'chat', target: 'Jane Doe', deny: ['view'] }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { overwrite: { ViewChannel: false }, target: '1' }, 'the member, not the Janitor role');
+	});
+});
+
+describe('send_message / send_dm', () => {
+	it('drops the @everyone tag for anyone but the owner, and really pings for the owner', async () => {
+		const { deps, sent } = makeDeps();
+		const result = await callTool('send_message', { channel: 'chat', text: 'announcement', mentions: ['everyone'] }, deps);
+		assert.equal(result.ok, true);
+		assert.deepEqual(sent[0].allowedMentions.parse, []);
+		assert.equal(sent[0].content, 'announcement');
+		assert.ok(result.warnings.some((w) => w.includes('owner')));
+
+		const owner = makeDeps({ owner: true });
+		await callTool('send_message', { channel: 'chat', text: 'announcement', mentions: ['everyone'] }, owner.deps);
+		assert.deepEqual(owner.sent[0].allowedMentions.parse, ['everyone']);
+		assert.equal(owner.sent[0].content, '@everyone announcement');
+	});
+
+	it('send_dm obeys the rate limit', async () => {
+		resetDmLimiter();
+		const { deps, sent } = makeDeps();
+		assert.equal((await callTool('send_dm', { to: 'Jane', text: 'one' }, deps)).ok, true);
+		assert.equal((await callTool('send_dm', { to: 'Jane', text: 'two' }, deps)).ok, true);
+		const third = await callTool('send_dm', { to: 'Jane', text: 'three' }, deps);
+		assert.equal(third.ok, false, '2 per minute per target');
+		assert.equal(sent.filter((s) => s.dm).length, 2);
+		resetDmLimiter();
+	});
+
+	it('emoji: an already formatted <:name:id> is not wrapped a second time', async () => {
+		const { deps, sent, guild } = makeDeps();
+		guild.emojis.cache.set('3', { id: '3', name: 'wave', toString: () => '<:wave:3>' });
+		await callTool('send_message', { channel: 'chat', text: 'hello <:wave:3> and :wave:' }, deps);
+		assert.equal(sent[0].content, 'hello <:wave:3> and <:wave:3>');
+	});
+});
+
+describe('channel and voice tools', () => {
+	it('lock_channel neutralises SendMessages when unlocking instead of deleting the overwrite', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		await callTool('lock_channel', { channel: 'chat', locked: false }, deps);
+		assert.deepEqual(sent.at(-1), { overwrite: { SendMessages: null }, target: 'everyone' });
+		assert.ok(!sent.some((s) => s.deleted));
+	});
+
+	it('set_channel_permission: "only the chillz role may join" turns it on for the role and off for everyone', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const result = await callTool('set_channel_permission', { channel: 'General', target: 'chillz', allow: ['connect', 'see'], only: true }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		const byTarget = Object.fromEntries(sent.filter((s) => s.overwrite).map((s) => [s.target, s.overwrite]));
+		assert.deepEqual(byTarget.r1, { Connect: true, ViewChannel: true });
+		assert.deepEqual(byTarget.everyone, { Connect: false, ViewChannel: false });
+		assert.match(result.spoken, /connect, view on for the chillz role/);
+		assert.match(result.spoken, /off for everyone/);
+	});
+
+	it('set_channel_permission: handles a person target, raw flag names, an unknown permission and the protected everyone reset', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		let result = await callTool('set_channel_permission', { channel: 'chat', target: 'Jane', deny: ['send_messages', 'ViewChannel'] }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { overwrite: { SendMessages: false, ViewChannel: false }, target: '1' });
+
+		result = await callTool('set_channel_permission', { channel: 'chat', target: 'everyone', allow: ['fly'] }, deps);
+		assert.equal(result.ok, false);
+		assert.match(result.spoken, /do not recognise these permissions: fly/);
+
+		result = await callTool('set_channel_permission', { channel: 'chat', target: 'everyone', reset: true }, deps);
+		assert.equal(result.ok, false, 'resetting everything for everyone would expose a hidden channel');
+		assert.ok(!sent.some((s) => s.deleted));
+
+		result = await callTool('set_channel_permission', { channel: 'chat', target: 'Jane', reset: true }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { deleted: '1' });
+
+		result = await callTool('set_channel_permission', { channel: 'chat', target: 'Jane', reset: true, deny: ['write'] }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { overwrite: { SendMessages: null }, target: '1' });
+
+		const noOwner = makeDeps();
+		assert.equal((await callTool('set_channel_permission', { channel: 'chat', target: 'Jane', deny: ['write'] }, noOwner.deps)).denied, true);
+	});
+
+	it('grant_role: the server owner can be given a role too (what counts is the position of the role)', async () => {
+		const { deps, sent, guild } = makeDeps({ owner: true });
+		guild.ownerId = '1';
+		guild.members.me = { id: 'bot', permissions: { has: () => true }, roles: { highest: { name: 'Melis', position: 9 } } };
+		const jane = guild.members.cache.get('1');
+		jane.manageable = false;
+		jane.roles = { add: async (role) => sent.push({ roleAdded: role.name }), remove: async () => {} };
+		const result = await callTool('grant_role', { member: 'Jane', role: 'chillz' }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { roleAdded: 'chillz' });
+	});
+
+	it('join_voice: resolves a channel name given as a string, and accepts a channel object as well', async () => {
+		const { deps, sent } = makeDeps();
+		assert.equal((await callTool('join_voice', { channel: 'general' }, deps)).ok, true);
+		assert.deepEqual(sent.at(-1), { joined: 'General' });
+		assert.equal((await callTool('join_voice', { channel: { id: 'v1', name: 'General' } }, deps)).ok, true);
+	});
+
+	it('move_member runs behind the owner gate', async () => {
+		const noOwner = makeDeps();
+		assert.equal((await callTool('move_member', { member: 'Jane', channel: 'General' }, noOwner.deps)).denied, true);
+		const { deps, sent } = makeDeps({ owner: true });
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { moved: 'General' });
+	});
+});
+
+describe('moderation: confirmation on a fuzzy name match', () => {
+	it('kick_member asks first when the name is not an exact match, and acts on confirm', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const asked = await callTool('kick_member', { member: 'Janee Doee' }, deps); // fuzzy
+		assert.equal(asked.ok, false);
+		assert.equal(asked.needs_confirmation, true, asked.spoken);
+		assert.ok(!sent.some((s) => s.kick));
+		const done = await callTool('kick_member', { member: 'Janee Doee', confirm: true }, deps);
+		assert.equal(done.ok, true, done.spoken);
+		assert.ok(sent.some((s) => s.kick === '1'));
+	});
+
+	it('kick_member asks for no confirmation when the name matches exactly', async () => {
+		const { deps, sent } = makeDeps({ owner: true });
+		const done = await callTool('kick_member', { member: 'Jane' }, deps);
+		assert.equal(done.ok, true, done.spoken);
+		assert.ok(sent.some((s) => s.kick === '1'));
+	});
+});
+
+describe('set_setting', () => {
+	it('awaits applySetting and passes an {ok:false} result straight through', async () => {
+		const { deps } = makeDeps({ owner: true });
+		deps.applySetting = async (name, value) => (name === 'local_tts' ? { ok: false, spoken: 'the local server is down' } : name === 'record' ? value === 'off' ? false : true : null);
+		deps.settingNames = () => ['local_tts', 'record'];
+		const failed = await callTool('set_setting', { name: 'local_tts', value: 'on' }, deps);
+		assert.equal(failed.ok, false);
+		assert.equal(failed.spoken, 'the local server is down');
+		const off = await callTool('set_setting', { name: 'record', value: 'off' }, deps);
+		assert.equal(off.ok, true);
+		assert.ok(off.spoken.includes('off'), off.spoken);
+	});
+});
+
+describe('music / memory / summary tools', () => {
+	it('set_music_volume says the old and the new value, and logs the change', async () => {
+		const { deps } = makeDeps();
+		const logs = [];
+		deps.log = (line) => logs.push(line);
+		let volume = 0.35;
+		deps.music = { setVolume: (v) => (volume = v), state: () => ({ playing: true, queue: [], volume }) };
+		let result = await callTool('set_music_volume', { percent: 50 }, deps);
+		assert.equal(result.ok, true);
+		assert.equal(volume, 0.5);
+		assert.match(result.spoken, /was 35 percent, I set it to 50 percent/);
+		assert.ok(logs.some((l) => l.includes('[music] volume: 35% -> 50%')), logs.join(' | '));
+		result = await callTool('set_music_volume', { percent: 50 }, deps);
+		assert.match(result.spoken, /already 50 percent/);
+	});
+
+	it('play_music and its neighbours work against a fake player, and explain themselves without one', async () => {
+		const { deps } = makeDeps();
+		const calls = [];
+		deps.music = {
+			volume: 0.35,
+			current: null,
+			queue: [],
+			enqueue: async (query) => (calls.push(query), { track: { title: `T:${query}`, kind: 'url' }, position: 0, startedNow: true }),
+			stop: () => null,
+			pause: () => false,
+			resume: () => false,
+			skip: () => null,
+			setVolume: (v) => v,
+			state: () => ({ playing: false, queue: [] }),
+			nowPlayingText: () => 'Nothing is playing right now.',
+			remove: () => null,
+		};
+		const played = await callTool('play_music', { query: 'moonlight sonata' }, deps);
+		assert.equal(played.ok, true);
+		assert.ok(played.spoken.includes('T:moonlight sonata'));
+		assert.equal((await callTool('pause_music', {}, deps)).ok, false);
+		assert.equal((await callTool('set_music_volume', { percent: 40 }, deps)).ok, true);
+		assert.equal((await callTool('set_music_volume', { percent: 'abc' }, deps)).ok, false);
+		delete deps.music;
+		assert.equal((await callTool('play_music', { query: 'x' }, deps)).ok, false, 'it explains itself when music is switched off');
+	});
+
+	it('remember/recall/forget: anyone may delete their own note, only the owner may delete someone else\'s', async () => {
+		const notes = new Map();
+		const memory = {
+			add: async (id, text) => (notes.set(id, [...(notes.get(id) ?? []), { text }]), { text }),
+			notesFor: (id) => notes.get(id) ?? [],
+			remove: async (id) => notes.delete(id),
+			clear: async (id) => notes.delete(id),
+		};
+		const { deps } = makeDeps();
+		deps.memory = memory;
+		deps.currentSpeakerId = () => '1';
+		deps.currentSpeakerName = () => 'Jane Doe';
+		assert.equal((await callTool('remember_note', { note: 'has a cat called Smokey' }, deps)).ok, true);
+		const recalled = await callTool('recall_notes', {}, deps);
+		assert.ok(recalled.spoken.includes('Smokey'));
+		// somebody else (speaker 2) cannot delete Jane's note
+		deps.currentSpeakerId = () => '2';
+		assert.equal((await callTool('forget_note', { member: 'Jane', note: 'all' }, deps)).denied, true);
+		deps.currentSpeakerId = () => '1';
+		assert.equal((await callTool('forget_note', { note: 'all' }, deps)).ok, true);
+		assert.equal(notes.has('1'), false);
+	});
+
+	it('summarize_conversation speaks what deps.summarize returns', async () => {
+		const { deps } = makeDeps();
+		deps.summarize = async ({ hours }) => ({ summary: `summary ${hours}`, count: 3 });
+		const result = await callTool('summarize_conversation', { hours: 2 }, deps);
+		assert.equal(result.spoken, 'summary 2');
+	});
+});

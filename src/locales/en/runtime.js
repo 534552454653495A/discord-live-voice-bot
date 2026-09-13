@@ -1,0 +1,236 @@
+// runtime strings (en). Keys are referenced as "runtime.<key>" through src/i18n.
+//
+// Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
+// owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
+export default {
+	// ---------------------------------------------------------------- privacy / recording
+	record_off_placeholder: '[recording off: {count} characters]',
+
+	// ---------------------------------------------------------------- music
+	music_playing: 'playing: {title}',
+	music_finished: 'finished: {title} (queue empty)',
+	music_failed: 'could not be played: {title} — {error}',
+
+	// ---------------------------------------------------------------- local speech (Chatterbox)
+	local_tts_failed: 'Local speech could not be generated: {error}',
+	meta_voice_local: 'local',
+
+	// ---------------------------------------------------------------- local brain
+	local_brain_no_text_model: 'no text model (DEEPSEEK_API_KEY or OpenAI TEXT_MODEL)',
+	local_brain_server_down: 'the Chatterbox server is down',
+	local_brain_server_loading: 'Chatterbox is loading ({status})',
+	local_brain_no_stt: 'whisper STT is not loaded (the server has to start with --stt small)',
+	local_brain_hint_started: 'the server has been started, the switch happens once it is ready',
+	local_brain_hint_status: 'server: {status}',
+	local_brain_hint_manual: 'start it with tools\\run-chatterbox.cmd',
+	local_brain_not_yet: 'Could not switch to the local brain yet ({reason}): {problems} — {hint}',
+	local_brain_failed: 'Could not switch to the local brain: {problems}',
+	local_brain_active: 'Local brain engaged ({reason}): ears whisper ({stt}), brain {brain}, mouth Chatterbox ({tts}).',
+	chatterbox_started: 'The Chatterbox server was started by the bot',
+	local_brain_gave_up: 'Local brain: Chatterbox did not become ready within 10 min; gave up (check the server log).',
+	local_brain_off_log: 'The local brain is off ({reason}); GPT-Live is in use.',
+	local_brain_off: 'The local brain is off ({reason})',
+	local_stt_error: 'Local STT error: {error}',
+	local_brain_no_reply: 'The local brain could not produce a reply: {error}',
+	source_local_brain: 'local brain',
+	note_action: '(action, for {name}) {text}',
+	note_self_said: '(you said) {text}',
+	barge_in: 'Interrupted; the bot goes quiet.',
+	someone: 'someone',
+
+	// ---------------------------------------------------------------- reasons handed to enter/exit/pause
+	reason_live_back: 'GPT-Live is back',
+	reason_live_down: 'GPT-Live is down',
+	reason_setting: 'setting',
+	reason_auto_mode: 'back to automatic mode',
+	reason_live_selected: 'GPT-Live selected',
+	reason_local_brain_selected: 'local brain selected',
+	reason_left_voice: 'left the voice channel',
+	reason_voice_lost: 'the voice connection dropped',
+	reason_quota_exceeded: 'daily quota used up',
+	reason_idle: 'idle',
+
+	// ---------------------------------------------------------------- transcripts
+	transcript_in: 'channel> {line}',
+	transcript_out: 'bot > {line}',
+	transcript_user_line: 'channel> {name}: {line}',
+	log_attribution: '[attribution] position={start}-{end}ms added={audio}ms ownerSpoke={ownerActive} ownerText="{ownerText}"',
+	speaker_correction: 'Correction: the person who said "{line}" a moment ago is {name}{owner}.',
+	log_context_correction: '[context] correction: "{line}" -> {name}',
+	command_error: 'Command error: {error}',
+
+	// ---------------------------------------------------------------- wake word
+	// Names the bot answers to on top of the active character's name; matched against normalised speech.
+	wake_words: ['bot', 'assistant'],
+	// Filler words dropped when deciding whether the name was called on its own or with a request.
+	wake_filler_words: ['hey', 'yo', 'hi', 'please', 'dude', 'man', 'bro'],
+	log_wake_name_only: 'Called by name; the model was told to answer.',
+	wake_nudge: 'Someone just called you by your name. Answer with a short reply.',
+	log_wake_request: 'Called by name with a request; the model was told to carry it out.',
+	wake_nudge_request:
+		'Someone called you by your name and said this: "{line}". Do not ask "yes?"; understand the request and carry it out ' +
+		'(delegate it to the backend if it is Discord work or research, then say the result), or answer it if it is a question.',
+
+	// ---------------------------------------------------------------- tool events
+	tool_ok: 'succeeded',
+	tool_failed: 'failed',
+	tool_timing: ' ({seconds} s)',
+	log_tool_failed: '[tool] {name} failed{timing}: {output}',
+	log_tool_slow: '[tool] {name} slow{timing}',
+
+	// ---------------------------------------------------------------- GPT-Live session
+	live_session_open: 'GPT-Live session opened ({sessionId})',
+	live_ready: 'GPT-Live ready (session {sessionId}, model {model}, voice {voice}{character}, tools: {tools})',
+	live_ready_character: ', character: {name}',
+	tools_backend: 'backend',
+	tools_client: 'client',
+	intro_prompt: 'You have switched to a new character. In one short sentence, introduce yourself in this character\'s voice and then start listening.',
+	greet_prompt: 'As your very first reply, without waiting for anyone to speak, say this: "{text}". Then start listening.',
+	greet_nudge: 'Start talking now.',
+	music_context: 'There is music playing in the background right now: {title}. The music is turned down while you speak.',
+
+	// ---------------------------------------------------------------- latency
+	seconds_value: '{seconds} s',
+	latency_kind_response: 'response',
+	latency_kind_backend: 'backend',
+	latency_note_response: 'user stopped speaking -> first audio',
+	log_latency_response: '[latency] response {seconds} s (user stopped speaking -> first audio)',
+	log_latency_backend: '[latency] backend reply {seconds} s',
+
+	// ---------------------------------------------------------------- quota
+	live_session_seconds: 'GPT-Live session time: {seconds} s{quota}',
+	live_session_quota_suffix: ' (today {used}/{limit} min)',
+	quota_warning: 'The GPT-Live daily quota is 90% used ({used}/{limit} min).',
+	quota_exceeded_activity: 'The daily GPT-Live quota is used up ({limit} min); the session stays closed until tomorrow.',
+	quota_exceeded_dm: 'The GPT-Live daily quota is used up; I closed the voice session until tomorrow. (DAILY_LIVE_SECONDS)',
+
+	// ---------------------------------------------------------------- connection / retry
+	live_error: 'GPT-Live error{code}: {message}',
+	live_warning: 'GPT-Live warning: {message}',
+	retry_why_closed: 'connection closed ({detail})',
+	retry_why_connect_failed: 'could not connect',
+	live_retry_fatal: 'GPT-Live {why} — {detail}{hint}\n            Retrying in {minutes} min (it sorts itself out once credit is topped up).',
+	live_fatal_activity: 'GPT-Live permanent error: {detail}',
+	live_fatal_dm: 'GPT-Live cannot connect ({code}): {message}{hint}',
+	live_retry_soon: 'GPT-Live {why}{detail}; retrying in {seconds} s',
+	live_paused: 'The GPT-Live session was closed ({reason})',
+	live_paused_log: 'The GPT-Live session was closed ({reason}).',
+	idle_close: 'Nobody has spoken for a long time; closing the GPT-Live session (billing stops).',
+
+	// ---------------------------------------------------------------- rejoin / persona / owner
+	rejoin_label_recover: 'Rejoining the voice channel',
+	rejoin_label_return: 'I had left the channel; heading back',
+	rejoin_failed: 'I could not get back: {error}',
+	persona_updated: 'Character updated ({reason}) — active: {name}',
+	persona_default: 'default',
+	owner_log: '[owner] {text}',
+	owner_dm_failed: 'The DM to the owner could not be sent: {error}',
+
+	// ---------------------------------------------------------------- settings
+	// Spoken aliases -> canonical setting name; the switch in applySetting only knows the canonical ones.
+	setting_aliases: {
+		transcript: 'transcripts',
+		idle: 'idle_close_minutes',
+		local_mode: 'local_tts',
+		privacy: 'record',
+	},
+	record_on: 'Recording on (transcripts are written)',
+	record_off: 'Recording off (transcripts are not written)',
+	local_brain_busy: 'While the local brain is on the voice already comes from Chatterbox; switch the brain to GPT-Live first.',
+	// Spoken values for the "brain" setting.
+	brain_local_words: ['local', 'on', 'enable', '1', 'true'],
+	brain_live_words: ['live', 'gpt', 'openai', 'off', 'disable', '0', 'false'],
+	brain_auto_words: ['auto', 'automatic'],
+	brain_setting_help: 'For the brain setting say "local", "gpt" or "auto".',
+	brain_local_failed: 'I could not switch to the local brain; it needs the Chatterbox server (with --stt) and a text model.',
+	brain_value_local: 'local',
+	brain_value_auto: 'auto',
+	brain_value_live: 'gpt-live',
+
+	// ---------------------------------------------------------------- local voice mode
+	local_tts_disabled_log: 'Local voice mode is off (turn it on with LOCAL_TTS=1).',
+	local_tts_disabled: 'Local voice mode is off in this installation (.env: LOCAL_TTS=1).',
+	local_tts_server_started_log: 'The local TTS server was down; it has been started (try again in 1-2 min).',
+	local_tts_server_started: 'I started the local voice server; try again in a minute or two.',
+	local_tts_server_down_log: 'The local TTS server is down; start it: tools\\run-chatterbox.cmd',
+	local_tts_server_down: 'The local voice server is down; the Chatterbox server has to be started first.',
+	local_tts_not_ready_log: 'Local TTS is not ready ({status}{error}).',
+	local_tts_status_unknown: 'unknown',
+	local_tts_status_loading: 'loading',
+	local_tts_not_ready: 'The local voice server is not ready yet ({status}).',
+	local_tts_on_log: 'Local voice mode ON — model {model} ({device}), {rate} Hz.',
+	local_tts_off_log: 'Local voice mode is off; the GPT-Live voice is in use.',
+	local_tts_mode_on: 'Local voice mode on',
+	local_tts_mode_off: 'Local voice mode off',
+
+	// ---------------------------------------------------------------- delegation
+	delegation_requested: 'Delegation requested ({id}): "{question}"',
+	delegation_answered: 'Delegation answered ({id}){timing}.',
+	delegation_timing: ' — {seconds} s',
+	delegation_error: 'Delegation error: {error}',
+	delegation_failed_spoken: 'I could not finish the job.',
+
+	// ---------------------------------------------------------------- who is in the channel
+	speaker_context:
+		'The person talking to you right now is {name}{ownerNote}. You know them: you know their name, and if they ask ' +
+		'"who am I / do you recognise me" answer with their name{ownerAnswer}.',
+	speaker_context_owner: '; this person is your owner (the bot owner)',
+	speaker_context_owner_answer: ' and by saying that they are your owner',
+	memory_notes: 'Your earlier notes about {name} (use them naturally if needed, do not recite them):\n{summary}',
+	log_context_speaker: '[context] speaking: {name}{owner}',
+	owner_tag: ' (owner)',
+	owner_suffix: ' (your owner)',
+	roster_prefix: 'In the voice channel right now',
+	roster_context: '{prefix}: {names}. You are told separately who is speaking; address people by their names and recognise your owner.',
+	log_context_roster: '[context] in the channel: {names}',
+	member_left_voice: '{name} left the voice channel.',
+	member_joined_voice: '{name}{owner} joined the voice channel.',
+
+	// ---------------------------------------------------------------- voice connection
+	speech_detected: 'Speech detected; reopening the GPT-Live session.',
+	voice_lost: 'The voice connection dropped and did not come back; trying to recover.',
+	joined_voice: 'I joined the voice channel: {channel}',
+	join_notice: '🎙️ I joined **{channel}**. {recording}; you can see the commands with /help.',
+	join_notice_recording_on: 'Conversations are transcribed and stored in the local panel',
+	join_notice_recording_off: 'Recording is off',
+	left_voice_permanent: 'I left the voice channel (for good).',
+	left_voice_temporary: 'I left the voice channel; I will be back.',
+
+	// ---------------------------------------------------------------- process lifecycle
+	shutting_down: 'Shutting down...',
+	unhandled_rejection: 'Unhandled error:',
+	uncaught_exception: 'Unexpected error, shutting down:',
+	discord_error: 'Discord error: {error}',
+	interaction_error: 'Interaction error: {error}',
+	message_error: '[message] error: {error}',
+	image_placeholder: '[image]',
+	// Spellings that force a privileged intent on or off instead of using what was detected.
+	enabled_words: ['1', 'true', 'yes', 'on', 'enabled'],
+	disabled_words: ['0', 'false', 'no', 'off', 'disabled'],
+
+	// ---------------------------------------------------------------- local panel
+	panel_title: '{name} — local panel',
+	panel_default_name: 'Voice bot',
+	panel_status_voice: 'Voice: {channel}',
+	panel_status_brain: ' · Brain: {brain}',
+	panel_status_chatterbox: ' · Chatterbox: {status}',
+	panel_status_live: ' · GPT-Live: {state}',
+	panel_status_record: ' · Recording: {state}',
+	panel_status_events: ' · {count} events',
+	panel_on: 'on',
+	panel_off: 'off',
+	panel_local: 'local',
+	panel_metric_dm: 'DM',
+	panel_metric_channel: 'Channel',
+	panel_metric_voice: 'Voice',
+	panel_metric_tool: 'Tool',
+	panel_metric_gate: 'Gate',
+	panel_metric_response_p50: 'Response P50',
+	panel_metric_voice_source: 'Voice source',
+	panel_metric_member_index: 'Member index',
+	panel_metric_memory_notes: 'Memory notes',
+	panel_metric_daily_live: 'Daily Live',
+	panel_music: '🎵 {now} (volume {volume}%)',
+	minutes_value: '{used} min',
+	minutes_pair: '{used}/{limit} min',
+};

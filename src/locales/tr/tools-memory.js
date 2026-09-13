@@ -1,0 +1,21 @@
+// Strings for src/tools/memory.js (tr). Referenced as "tools.memory.<key>".
+export default {
+	disabled: 'Hafıza özelliği kapalı (.env: MEMORY=1).',
+	no_target_remember: 'Kimin hakkında not alacağımı anlayamadım.',
+	empty_note: 'Not boş görünüyor.',
+	note_event: 'not: {note}',
+	noted: 'Not aldım: {note}',
+	noted_named: 'Not aldım ({who}): {note}',
+	no_target_recall: 'Kimi sorduğunu anlayamadım.',
+	no_notes: '{who} hakkında notum yok.',
+	no_notes_unknown: 'Bu kişi hakkında notum yok.',
+	notes: '{who} hakkında bildiklerim: {notes}.',
+	notes_unknown: 'Bu kişi hakkında bildiklerim: {notes}.',
+	no_target_forget: 'Kimin notunu sileceğimi anlayamadım.',
+	all_words: ['hepsi', 'hepsini', 'tümü', 'tumu', 'all', '*'],
+	note_not_found: 'Öyle bir not bulamadım.',
+	cleared_event: 'tüm notlar silindi',
+	removed_event: 'not silindi: {note}',
+	cleared: 'Bu kişi hakkındaki tüm notları sildim.',
+	removed: 'Notu sildim.',
+};

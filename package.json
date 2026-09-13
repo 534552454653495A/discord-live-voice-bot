@@ -1,0 +1,64 @@
+{
+  "name": "discord-live-voice-bot",
+  "version": "1.3.0",
+  "description": "Discord voice bot that listens to a voice channel in real time, talks back, plays its own music and operates the server through 53 model-callable tools behind a voice-based owner gate.",
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "voice",
+    "realtime",
+    "speech-to-speech",
+    "gpt-live",
+    "openai",
+    "voice-assistant",
+    "discordjs",
+    "music-bot",
+    "whisper",
+    "tts"
+  ],
+  "license": "MIT",
+  "author": "serefsiz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/534552454653495A/discord-live-voice-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/534552454653495A/discord-live-voice-bot/issues"
+  },
+  "homepage": "https://github.com/534552454653495A/discord-live-voice-bot#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "node --env-file=.env src/index.js",
+    "lint": "oxlint --deny-warnings src test scripts",
+    "test": "node --test \"test/unit/*.test.js\" && node test/selftest.js",
+    "test:unit": "node --test \"test/unit/*.test.js\"",
+    "selftest": "node test/selftest.js",
+    "check": "npm run lint && npm run check:locales && npm test",
+    "ids": "node --env-file=.env scripts/ids.mjs",
+    "roles-check": "node --env-file=.env scripts/roles-check.mjs",
+    "verify-new": "node --env-file=.env scripts/verify-new.mjs",
+    "tts-check": "node --env-file=.env scripts/tts-check.mjs",
+    "check:locales": "node scripts/check-locales.mjs"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@noble/ciphers": "^2.4.0",
+    "discord.js": "^14.27.0",
+    "ffmpeg-static": "^5.3.0",
+    "openai": "^7.15.0",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "ws": "^8.21.3",
+    "yt-dlp-wrap": "^2.3.12"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
+  },
+  "devDependencies": {
+    "oxlint": "^1.82.0"
+  },
+  "private": false
+}

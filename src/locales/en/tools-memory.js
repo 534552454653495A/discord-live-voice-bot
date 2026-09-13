@@ -1,0 +1,21 @@
+// Strings for src/tools/memory.js (en). Referenced as "tools.memory.<key>".
+export default {
+	disabled: 'Memory is turned off (.env: MEMORY=1).',
+	no_target_remember: 'I could not work out who to take a note about.',
+	empty_note: 'The note looks empty.',
+	note_event: 'note: {note}',
+	noted: 'Noted: {note}',
+	noted_named: 'Noted ({who}): {note}',
+	no_target_recall: 'I could not work out who you are asking about.',
+	no_notes: 'I have no notes about {who}.',
+	no_notes_unknown: 'I have no notes about this person.',
+	notes: 'What I know about {who}: {notes}.',
+	notes_unknown: 'What I know about this person: {notes}.',
+	no_target_forget: 'I could not work out whose note to delete.',
+	all_words: ['all', 'everything', 'all of them', 'every note', '*'],
+	note_not_found: 'I could not find a note like that.',
+	cleared_event: 'all notes deleted',
+	removed_event: 'note deleted: {note}',
+	cleared: 'I deleted every note about this person.',
+	removed: 'I deleted the note.',
+};

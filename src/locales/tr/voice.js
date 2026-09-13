@@ -1,0 +1,18 @@
+// voice strings (tr). Keys are referenced as "voice.<key>" through src/i18n.
+export default {
+	ring_capacity: 'Ring kapasitesi pozitif tamsayı olmalı: {capacity}',
+	speaking: 'konuşan: {ids}',
+	output_blocked: 'ses çıkışı tıkalı; {count} kare atlandı',
+	connection_destroyed: 'ses bağlantısı yok edildi',
+	state_timeout: 'ses bağlantısı {status} durumuna geçmedi (şu an: {current})',
+	join_cancelled: 'katılma iptal edildi (yeni istek geldi)',
+	join_retry: 'Ses bağlantısı kurulamadı; önce çıkıp yeniden deniyorum...',
+	state_change: 'ses durumu: {from} -> {to}',
+	connection_error: 'ses bağlantısı hatası:',
+	disconnected: 'Ses bağlantısı koptu (sebep: {reason}{code}).',
+	disconnect_code: ', kod: {code}',
+	player_error: 'oynatma hatası:',
+	stream_error: 'ses akışı hatası:',
+	receive_error: 'ses alım hatası',
+	opus_decode_error: 'opus çözme hatası',
+};

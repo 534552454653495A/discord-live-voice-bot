@@ -1,0 +1,73 @@
+// Strings for src/tools/helpers.js (en). Referenced as "tools.helpers.<key>".
+// Also covers the shared tool plumbing in src/tools/index.js and src/tools/registry.js.
+export default {
+	gate_transcript_missing: 'I have not heard that clearly yet; say it again and I will do it.',
+	gate_reason_transcript_missing: 'transcript for this turn had not arrived',
+	audit_reason: 'voice command',
+	stale_confirmation: 'I could not match that confirmation (different target, or more than 30 seconds passed). Say it again and I will ask once more.',
+	confirm_prompt: '{question} If you want it done, say "confirm" and name the same target again.',
+
+	// members / mentions / emojis / stickers
+	someone: 'someone',
+	log_member_fuzzy: '[tool] "{name}" was not an exact match; picked a similar person: {display}',
+	log_member_not_found: '[tool] no member called "{name}".',
+	mention_not_found: 'no member or role called "{name}"',
+	emoji_missing: 'the "{name}" emoji is not on this server',
+	sticker_missing: 'the "{name}" sticker is not on this server',
+
+	// dates and audit-log entries
+	date_locale: 'en-US',
+	date_unknown: 'unknown',
+	audit_action_unknown: 'action {action}',
+
+	// Discord API errors, keyed by error code; each one is read out as the reason for a failure.
+	discord_errors: {
+		10003: 'channel not found',
+		10007: 'member not found',
+		10008: 'message not found',
+		10011: 'role not found',
+		10013: 'user not found',
+		50001: 'I do not have access to that channel',
+		50007: 'their direct messages are closed',
+		50013: 'I do not have enough permissions',
+		50021: 'that cannot be done to a system message',
+		50024: 'that cannot be done in this kind of channel',
+		50034: 'messages older than 14 days cannot be bulk deleted',
+		50035: 'Discord rejected the request (invalid field)',
+		50074: 'that channel cannot be deleted (community channel)',
+		60003: 'two-factor authentication is required',
+		429: "I hit Discord's rate limit, give me a moment",
+	},
+	error_unknown: 'unknown error',
+	log_failure: '[tool] {label}: {error}',
+	failure_spoken: '{prefix} ({reason}).',
+
+	// owner gate
+	gate_default_tool: 'admin',
+	log_gate_denied: '[gate] {tool}: denied ({reason})',
+	log_gate_allowed: '[gate] {tool}: allowed — {detail}{tail}',
+	log_gate_tail: ' (text: "{text}")',
+	gate_denied_activity: '{tool}: denied ({reason})',
+	gate_allowed_activity: '{tool}: allowed — {detail}',
+	gate_disabled: 'Admin commands are switched off in this setup.',
+	gate_reason_disabled: 'switched off',
+	gate_not_heard: 'I did not hear the owner say this themselves; if the owner says it again, I will do it.',
+	gate_reason_not_said: 'the owner did not say the keyword',
+	gate_not_owner: 'Only the bot owner can ask for this, and it was not them asking.',
+	gate_reason_not_owner: 'the command was not said by the owner',
+	gate_reason_who: ' ({who})',
+	gate_interrupted: 'Somebody else cut in after the owner asked; to be safe, the owner should say it again.',
+	gate_reason_interrupted: '{who} spoke after the owner: "{text}"',
+	gate_someone_else: 'someone else',
+	gate_detail_owner_said: 'the owner said the command ("{word}")',
+	gate_owner_not_active: 'Only the bot owner can ask for this, and I cannot hear them right now.',
+	gate_reason_last_not_owner: 'the last speaker was not the owner',
+	gate_detail_last_owner: 'the owner spoke last, no keyword check',
+	gate_unsure: 'I could not be sure the owner said this themselves; if the owner says it again, I will do it.',
+	gate_detail_owner_word: 'the owner spoke last and said "{word}"',
+
+	// tool dispatch (src/tools/index.js)
+	unknown_tool: 'Unknown tool: {name}',
+	log_tool_error: '[tool] {name} unexpected error: {error}',
+	tool_error: 'Something went wrong while running {name}: {error}',
+};
