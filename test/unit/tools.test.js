@@ -308,6 +308,48 @@ describe('voice_disconnect', () => {
 	});
 });
 
+describe('two-step confirmation', () => {
+	// The realtime path hands every tool call a FRESH deps object so the owner gate can pin the turn.
+	// Anything the first call remembers has to survive that, or the question is asked forever.
+	const perCall = (base) => ({ ...base, currentTurn: () => null });
+
+	it('completes when each call gets its own deps object', async () => {
+		const { deps, guild } = makeDeps({ owner: true });
+		const deleted = [];
+		guild.channels.cache.get('10').delete = async () => deleted.push('chat');
+		const asked = await callTool('delete_channel', { channel: 'chat' }, perCall(deps));
+		assert.equal(asked.needs_confirmation, true, asked.spoken);
+		assert.deepEqual(deleted, [], 'nothing is deleted before the answer');
+		const done = await callTool('delete_channel', { channel: 'chat', confirm: true }, perCall(deps));
+		assert.equal(done.ok, true, done.spoken);
+		assert.deepEqual(deleted, ['chat']);
+	});
+
+	it('refuses a confirmation that names a different target', async () => {
+		const { deps, guild } = makeDeps({ owner: true });
+		const deleted = [];
+		guild.channels.cache.get('10').delete = async () => deleted.push('chat');
+		guild.channels.cache.get('v1').delete = async () => deleted.push('General');
+		await callTool('delete_channel', { channel: 'chat' }, perCall(deps));
+		const other = await callTool('delete_channel', { channel: 'General', confirm: true }, perCall(deps));
+		assert.equal(other.ok, false, 'the answer belongs to the other channel');
+		assert.deepEqual(deleted, []);
+	});
+
+	it("keeps one server from confirming another server's deletion", async () => {
+		const alpha = makeDeps({ owner: true });
+		const beta = makeDeps({ owner: true });
+		alpha.guild.id = 'alpha';
+		beta.guild.id = 'beta';
+		const deleted = [];
+		beta.guild.channels.cache.get('10').delete = async () => deleted.push('beta-chat');
+		await callTool('delete_channel', { channel: 'chat' }, perCall(alpha.deps));
+		const crossed = await callTool('delete_channel', { channel: 'chat', confirm: true }, perCall(beta.deps));
+		assert.equal(crossed.ok, false, 'alpha asking must not let beta delete');
+		assert.deepEqual(deleted, []);
+	});
+});
+
 describe('member lookup', () => {
 	it('resolves a raw user id and a mention, not just a name', async () => {
 		const { deps, guild } = makeDeps({ owner: true });

@@ -645,12 +645,30 @@ export function ownerAllowed(deps, keywords = null) {
 // was heard. That is why irreversible operations are two-step.
 const CONFIRM_TTL_MS = 30_000;
 
+// Pending confirmations are kept HERE, per guild, not on the deps object: the realtime path builds a
+// fresh deps for every tool call (so the owner gate can pin the turn to the request), and a question
+// written onto that throwaway object could never be matched by the answer, which left every two-step
+// action — channel and role deletion, a ban on a fuzzy name — asking forever. Keyed by guild so two
+// servers cannot confirm each other's destructive action.
+const confirmationsByGuild = new Map();
+
+function confirmationStore(deps) {
+	if (deps.pendingConfirmations instanceof Map) return deps.pendingConfirmations; // a test may inject one
+	const guildId = String(deps.guild?.id ?? 'default');
+	let store = confirmationsByGuild.get(guildId);
+	if (!store) {
+		store = new Map();
+		confirmationsByGuild.set(guildId, store);
+	}
+	return store;
+}
+
 /**
  * Two-step confirmation: the first call asks, a second call naming the same target (confirm:true, within 30 s) does it.
  * @returns {{ask: string}|{stale: true}|{ok: true}}
  */
 export function checkConfirmation(deps, { key, target, confirm, question }) {
-	const pending = (deps.pendingConfirmations ??= new Map());
+	const pending = confirmationStore(deps);
 	const now = Date.now();
 	for (const [pendingKey, value] of pending) {
 		if (now - value.at > CONFIRM_TTL_MS) pending.delete(pendingKey);

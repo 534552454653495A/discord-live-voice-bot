@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] — 2026-09-13
+
+### Fixed
+
+- **Two-step confirmations could never complete.** Deleting a channel or a role, and banning, kicking or
+  timing out somebody whose name was not an exact match, all ask first and act on the answer. The pending
+  question was stored on the dependency object handed to the tool, and since the owner-gate turn pinning
+  in 1.4.0 the realtime path builds a fresh one for every call — so the answer never found the question
+  and the assistant asked again, forever. Pending confirmations now live in a store of their own, kept
+  per server so one cannot confirm another's deletion.
+
 ## [1.5.1] — 2026-09-13
 
 ### Fixed
