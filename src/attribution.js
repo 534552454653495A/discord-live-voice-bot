@@ -11,32 +11,51 @@
 // started do not affect that turn's decision.
 
 import { normalize } from './text.js';
+import { locale, tRaw } from './i18n/index.js';
 
 const TURN_TTL_MS = 30_000; // the turn marker counts as stale after this long
 const UTTERANCE_GAP_MS = 1500; // fragments from the same person within this gap count as one utterance
 const MAX_UTTERANCES = 60;
 
 /**
- * Gate keyword entries. Turkish and English both take suffixes, so an entry of three letters or more
- * matches as a PREFIX by default ("ban" also matches "banned" / "banla"). An entry written as "=word"
- * is matched EXACTLY: short, everyday stems ("go", "gec", "al") would otherwise match a large part of
- * ordinary speech and make the "the owner said the command word" test meaningless.
+ * Gate keyword entries. An entry of three letters or more matches as a PREFIX by default ("ban" also
+ * matches "banned" / "banla"). An entry written as "=word" is a STEM: it matches the bare word and the
+ * inflections its own language allows, and nothing else. Short everyday stems ("go", "gec", "al")
+ * would swallow half of ordinary speech as a prefix and make "the owner said the command word"
+ * meaningless, but a bare-word-only test is just as wrong in a suffixing language, where the command
+ * word is almost never heard bare: "cek" arrives as "ceksene", "cekelim", "cekebilir misin".
  */
 function parseKeywords(keywords) {
 	const parsed = [];
 	for (const raw of keywords ?? []) {
 		const text = String(raw ?? '');
-		const exact = text.startsWith('=');
-		const word = exact ? text.slice(1) : text;
+		const stem = text.startsWith('=');
+		const word = stem ? text.slice(1) : text;
 		const needle = normalize(word);
-		if (needle) parsed.push({ word, needle, exact });
+		if (needle) parsed.push({ word, needle, stem });
 	}
 	return parsed;
 }
 
-function matchesNeedle(token, needle, exact) {
-	if (exact || needle.length < 3) return token === needle;
-	return token.startsWith(needle);
+// Which tails a stem may pick up is grammar, so the locale owns it: English adds a plural/third
+// person "s" to an imperative and little else, Turkish glues a whole mood onto the verb. Cached per
+// language; the pattern is read once and kept.
+const inflections = new Map();
+function inflectionFor() {
+	const code = locale();
+	if (!inflections.has(code)) {
+		const entry = tRaw('keywords.inflection');
+		inflections.set(code, entry?.pattern ? new RegExp(entry.pattern, entry.flags ?? 'u') : null);
+	}
+	return inflections.get(code);
+}
+
+function matchesNeedle(token, needle, stem) {
+	if (!stem && needle.length >= 3) return token.startsWith(needle);
+	if (token === needle) return true;
+	if (!token.startsWith(needle)) return false;
+	const tail = inflectionFor();
+	return Boolean(tail && tail.test(token.slice(needle.length)));
 }
 
 export class SpeakerAttribution {
@@ -335,8 +354,8 @@ export class SpeakerAttribution {
 			if (!this._beforeTurn(entry, cut)) continue;
 			if (age > windowMs && (!entry.owner || sawOther)) break; // outside the window: only uninterrupted owner words
 			if (!entry.owner) sawOther = true;
-			for (const { word, needle, exact } of needles) {
-				if (!matchesNeedle(entry.word, needle, exact)) continue;
+			for (const { word, needle, stem } of needles) {
+				if (!matchesNeedle(entry.word, needle, stem)) continue;
 				return { owner: entry.owner, id: entry.id, word, at: entry.at, seq: entry.seq ?? 0 };
 			}
 		}
@@ -381,14 +400,14 @@ export class SpeakerAttribution {
 	 * Which of these words did the owner say within the last `windowMs`? (null when none)
 	 * Only words inside the window are looked at; a ban command spoken minutes ago does not open the gate.
 	 * In a suffixing language a keyword rarely shows up bare (the root picks up inflections), so words of
-	 * three letters or more are matched as a prefix while short ones need an exact match.
+	 * three letters or more are matched as a prefix while a stem entry matches its own inflections.
 	 */
 	ownerMatch(words, windowMs = this.transcriptWindowMs) {
 		const now = this.now();
 		const tokens = this.words.filter((entry) => entry.owner && now - entry.at <= windowMs).map((entry) => entry.word);
 		if (!tokens.length) return null;
-		for (const { word, needle, exact } of parseKeywords(words)) {
-			if (tokens.some((token) => matchesNeedle(token, needle, exact))) return word;
+		for (const { word, needle, stem } of parseKeywords(words)) {
+			if (tokens.some((token) => matchesNeedle(token, needle, stem))) return word;
 		}
 		return null;
 	}

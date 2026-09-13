@@ -26,10 +26,23 @@ export default {
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
 	bool_true: ['evet', 'acik', 'açık', 'ac', 'aç', 'aktif', 'tamam', 'olur'],
 	bool_false: ['hayir', 'hayır', 'kapali', 'kapalı', 'kapat', 'kapa', 'pasif', 'yok'],
+	// Which tails a "=stem" gate keyword may pick up before it stops being that word. Turkish glues the
+	// whole mood onto the verb, so "cek" is heard as "ceksene", "cekelim", "cekebilir misin", "cektim",
+	// "cekiversene" -- an exact-word test misses every one of them. The shape is: optional ability
+	// ("-ebil") or hurry ("-iver") infix, then one mood/tense suffix, then an optional person ending;
+	// a person ending alone is not enough, which is what keeps "cekler" and "atlar" out. Everything is
+	// matched against the normalised (ASCII, lower-case) tail, so "ı/i" and "u/ü" collapse into one.
+	// Words that do not fit -- "cekirdek", "cekingen", "gecen", "gecmis", "alan", "atlas" -- stay out.
+	inflection: {
+		pattern:
+			'^(?:[ea]bil|[iu]ver)?(?:(?:s[ea]n(?:[ea]|[iu]z[ea])?|s[iu]n(?:[iu]z)?|[iu]n(?:[iu]z)?|[ea]lim|[ea]yim|[ea]c[ea]k|[iu]yor|[eaiu]r|[dt][iu])(?:m|n|k|z|[iu]m|[iu]z|s[iu]n(?:[iu]z)?|l[ea]r)?)?$',
+		flags: 'u',
+	},
 	// Owner-gate keywords: for an admin tool to run, the owner must have said one of these words.
 	// An entry of three letters or more matches as a prefix ("ban" also matches "banned"); an entry
-	// written as "=word" must match exactly. Everyday words that would otherwise match a large part of
-	// ordinary speech are pinned to exact matches, so "the owner said the command word" stays meaningful.
+	// written as "=word" is a stem and matches only itself plus the inflections above. Everyday words
+	// that would swallow half of ordinary speech as a prefix are written as stems, so "the owner said
+	// the command word" stays meaningful without losing "ceksene".
 	words: {
 		ban: ['ban', 'banla', 'unban', 'yasak', 'yasakla', 'kaldir', 'affet'],
 		kick: ['kick', 'at', 'kov'],
@@ -42,7 +55,11 @@ export default {
 		name: ['nick', 'nickname', 'isim', 'takma', 'adi', 'adini'],
 		invite: ['davet', 'invite', 'link'],
 		log: ['log', 'kayit', 'denetim'],
-		move: ['tasi', 'getir', 'surukle', 'gecir', 'gecin', 'gecsin', 'gotur', 'gonder', 'gitsin', 'gidin', 'gidelim', '=cek', '=al', '=at', '=gec', '=git'],
+		move: [
+			'tasi', 'tasin', 'getir', 'surukle', 'gecir', 'gecin', 'gecsin', 'gotur', 'gonder', 'gitsin', 'gidin',
+			'gidelim', 'indir', 'cikar', 'cikart', 'aktar', 'yolla', 'topla', 'toplan', 'davet', '=cek', '=al',
+			'=at', '=gec', '=git', '=in', '=kat',
+		],
 		everyone: ['herkes', 'herkesi', 'everyone', 'here', 'buradakiler', 'etiketle', 'duyuru'],
 		forget: ['unut', 'sil', 'forget'],
 		record: ['kayit', 'kaydi', 'dokum', 'gizlilik'],

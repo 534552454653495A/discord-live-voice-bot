@@ -26,6 +26,10 @@ export default {
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
 	bool_true: ['ok', 'okay', 'yep', 'yeah', 'active', 'up'],
 	bool_false: ['nope', 'nah', 'inactive', 'stop', 'down'],
+	// Which tails a "=stem" gate keyword may pick up before it stops being that word. An English command
+	// is an imperative and hardly inflects, so only the third-person "s" is allowed: "takes" is still
+	// "take", while "taking" and "taken" are ordinary speech and must not open the gate.
+	inflection: { pattern: '^(?:s|es)?$', flags: 'u' },
 	// Owner-gate keywords: for an admin tool to run, the owner must have said one of these words.
 	// Matching is prefix based for words of 3+ letters ("ban" also matches "banned"), so stems are enough.
 	// An entry of three letters or more matches as a prefix ("ban" also matches "banned"); an entry
@@ -43,7 +47,10 @@ export default {
 		name: ['nickname', 'nick', 'rename', '=name'],
 		invite: ['invite', 'invitation', 'link'],
 		log: ['log', 'audit', 'record', 'history'],
-		move: ['move', 'relocate', 'transfer', 'drag', '=bring', '=pull', '=take', '=send', '=come', '=join', '=fetch', '=put'],
+		move: [
+			'move', 'relocate', 'transfer', 'drag', 'gather', 'summon', '=bring', '=pull', '=take', '=send',
+			'=come', '=join', '=fetch', '=put', '=shift', '=haul',
+		],
 		everyone: ['everyone', 'everybody', 'here', 'ping', 'tag', 'mention', 'announce'],
 		forget: ['forget', 'delete', 'remove', 'drop'],
 		record: ['record', 'transcript', 'privacy'],

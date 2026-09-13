@@ -317,7 +317,7 @@ describe('SpeakerAttribution: keyword matching', () => {
 		assert.equal(b.commandSpeaker(['=go', 'move']), null, 'everyday speech is not a move command');
 	});
 
-	it('honours an "=word" entry as an exact match', () => {
+	it('honours an "=word" entry as a stem, not as a prefix', () => {
 		const a = new SpeakerAttribution({ ownerId: 'o' });
 		for (let i = 0; i < 30; i++) a.onFrame({ priority: true, active: ['o'] });
 		a.noteTranscript('taking the long way', { startMs: 0, endMs: 600 });
@@ -328,6 +328,45 @@ describe('SpeakerAttribution: keyword matching', () => {
 		for (let i = 0; i < 30; i++) b.onFrame({ priority: true, active: ['o'] });
 		b.noteTranscript('take him to the lounge', { startMs: 0, endMs: 600 });
 		assert.equal(b.commandSpeaker(['=take'])?.word, 'take');
+	});
+
+	// Live failure: the owner said "herkesi bu odaya ceksene" and "work zone odasina tasir misin", and
+	// the gate answered "the owner did not say the word" to both. A Turkish verb is almost never heard
+	// bare, so a stem has to match the mood glued onto it -- without letting an unrelated word that
+	// merely starts with the same three letters through.
+	it('matches a Turkish command stem through its suffixes, and not through a look-alike word', () => {
+		setLocale('tr');
+		try {
+			const move = tList('keywords.words.move');
+			const said = (text) => {
+				const a = new SpeakerAttribution({ ownerId: 'o' });
+				for (let i = 0; i < 30; i++) a.onFrame({ priority: true, active: ['o'] });
+				a.noteTranscript(text, { startMs: 0, endMs: 900 });
+				return a.commandSpeaker(move);
+			};
+			for (const text of [
+				'purna odasindakilerin hepsini buraya ceksene',
+				'zxcaotic i alip asagi odaya indir',
+				'dorduncu kisiyi work zone odasina tasir misin',
+				'beni yanina cekebilir misin',
+				'hadi sunu buraya cekelim',
+				'onu ustteki odaya cikar',
+			]) {
+				assert.ok(said(text)?.owner, `the owner really said a move word in: ${text}`);
+			}
+			for (const text of [
+				'cekirdek yiyorum',
+				'cok cekingen biri',
+				'gecen hafta gelmisti',
+				'gecmis olsun',
+				'burasi genis bir alan',
+				'atlar kosuyor',
+			]) {
+				assert.equal(said(text), null, `ordinary speech must not open the gate: ${text}`);
+			}
+		} finally {
+			setLocale('en');
+		}
 	});
 
 	it('stamps a sequence on every fragment so two in the same millisecond stay ordered', () => {

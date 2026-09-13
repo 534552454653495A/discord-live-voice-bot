@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] — 2026-09-14
+
+### Fixed
+
+- **A voice command was refused because the command word carried a suffix.** Gate keywords written as
+  `=word` were compared as whole words, which is a reasonable test in English and the wrong one in a
+  language that glues the mood onto the verb: the owner said "herkesi bu odaya ceksene" and
+  "work zone odasina tasir misin", and the gate answered that the owner had not said the word. A `=word`
+  entry is now a stem and matches the inflections its own language allows, which each locale declares in
+  `keywords.inflection`; an unrelated word that merely starts the same way ("cekirdek", "gecen") still
+  does not match, and English keeps its narrow "takes but not taking" rule.
+- **Several ways of asking for a move were missing from the vocabulary**, among them "indir", "cikar",
+  "aktar" and "topla".
+
 ## [1.6.1] — 2026-09-14
 
 ### Fixed
