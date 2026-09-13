@@ -3,6 +3,7 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[kayıt kapalı: {count} karakter]',
 

@@ -73,6 +73,19 @@ const SETTING_ALIASES = tRaw('runtime.setting_aliases') ?? {};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Cleans a value that came from a channel member (a display name, a transcript, a saved note) before it
+ * is handed to the model. Newlines and control characters are what let such a value pretend to be a new
+ * instruction line, so they collapse to spaces; notes keep their line breaks because they are a list.
+ */
+function safeContext(text, { keepLines = false } = {}) {
+	const raw = String(text ?? '');
+	const cleaned = keepLines ? raw.replace(/\r/gu, '') : raw.replace(/[\r\n]+/gu, ' ');
+	// Control characters are stripped on purpose: they are the other way a value can fake a new line.
+	// oxlint-disable-next-line no-control-regex
+	return cleaned.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, '').trim();
+}
+
 export class GuildSession {
 	/**
 	 * @param {object} services the process-wide services; everything that belongs to this one guild is
@@ -219,6 +232,8 @@ export class GuildSession {
 		this.sentCandidate = null;
 		this.sentCandidateFrames = 0;
 		this.sentSilentFrames = 0;
+		// userId -> when we last heard them; used to tell a quiet channel from a crowded one.
+		this.recentSpeakers = new Map();
 
 		this.taskDeps = this.buildDeps();
 		this.runTask = createTaskRunner(this.taskDeps);
@@ -1115,19 +1130,27 @@ export class GuildSession {
 			if (cfg.transcripts) this.log(speaker === 'user' ? t('runtime.transcript_in', { line }) : t('runtime.transcript_out', { line }));
 			if (speaker === 'user') {
 				this.record({ kind: 'voice', direction: 'in', who: speakerId, text: line });
-				// If the audio position says the transcript belongs to someone else, send the model a short correction.
-				if (cfg.announceSpeaker && speakerId && this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser) && this.live?.ready) {
-					const name = this.nameFor(speakerId);
-					this.lastAnnouncedUser = String(speakerId);
-					this.live.appendContext(
-						'instructions',
-						t('runtime.speaker_correction', {
-							line: line.slice(0, 80),
-							name,
-							owner: this.isOwnerId(speakerId) ? t('runtime.owner_suffix') : '',
-						}),
-					);
-					if (cfg.transcripts) this.log(t('runtime.log_context_correction', { line: line.slice(0, 40), name }));
+				// Who said this line is decided by where it sits in the audio, which is more reliable than
+				// whoever happened to be announced last. With several people talking the line is always
+				// labelled; with one or two, only when it contradicts the last announcement.
+				if (cfg.announceSpeaker && speakerId && this.live?.ready) {
+					const crowded = this.recentSpeakerCount() >= 3;
+					const contradicts = this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser);
+					if (crowded || contradicts) {
+						const name = safeContext(this.nameFor(speakerId));
+						this.lastAnnouncedUser = String(speakerId);
+						// "thinking", not "instructions": this carries somebody's words, and words spoken in the
+						// channel must never arrive on the channel the model treats as hard instruction.
+						this.live.appendContext(
+							'thinking',
+							t('runtime.speaker_line', {
+								name,
+								owner: this.isOwnerId(speakerId) ? t('runtime.owner_suffix') : '',
+								line: safeContext(line).slice(0, 200),
+							}),
+						);
+						if (cfg.transcripts && contradicts) this.log(t('runtime.log_context_correction', { line: line.slice(0, 40), name }));
+					}
 				}
 				// The user started talking: empty the local audio queue (barge-in).
 				this.interruptLocalSpeech();
@@ -1173,10 +1196,30 @@ export class GuildSession {
 			return;
 		}
 		this.log(t('runtime.log_wake_request'));
-		this.live.appendContext('instructions', t('runtime.wake_nudge_request', { line: line.slice(0, 200) }));
+		// The request itself is somebody's speech: it goes on "thinking" so it cannot act as an instruction.
+		this.live.appendContext('thinking', t('runtime.wake_nudge_request', { line: safeContext(line).slice(0, 200) }));
 	}
 
 	// ---------------------------------------------------------------- speakers
+
+	/**
+	 * How many different people have been heard in the last `withinMs`. With three or more the channel is
+	 * "crowded": a running "now speaking: X" commentary is then both noisy and frequently wrong for any
+	 * given sentence, so the transcript lines carry the speaker instead.
+	 */
+	recentSpeakerCount(withinMs = 20_000) {
+		const now = Date.now();
+		for (const [id, at] of this.recentSpeakers) {
+			if (now - at > withinMs) this.recentSpeakers.delete(id);
+		}
+		return this.recentSpeakers.size;
+	}
+
+	noteRecentSpeaker(userId) {
+		if (!userId) return;
+		this.recentSpeakers.set(String(userId), Date.now());
+		if (this.recentSpeakers.size > 24) this.recentSpeakers.delete(this.recentSpeakers.keys().next().value);
+	}
 
 	trackSentSpeaker({ priority, active, sent }) {
 		if (!sent || !this.cfg.announceSpeaker) return;
@@ -1195,8 +1238,14 @@ export class GuildSession {
 			this.sentCandidate = String(id);
 			this.sentCandidateFrames = 1;
 		}
-		if (this.sentCandidateFrames === SPEAKER_STABLE_FRAMES && this.sentCandidate !== this.lastAnnouncedUser) {
-			void this.announceSpeaker(this.sentCandidate);
+		if (this.sentCandidateFrames === SPEAKER_STABLE_FRAMES) {
+			this.noteRecentSpeaker(this.sentCandidate);
+			// In a crowded channel the announcement is skipped; onTranscript labels each finished line instead.
+			if (this.sentCandidate !== this.lastAnnouncedUser && this.recentSpeakerCount() < 3) {
+				void this.announceSpeaker(this.sentCandidate);
+			} else {
+				this.lastAnnouncedUser = this.sentCandidate;
+			}
 		}
 	}
 
@@ -1205,7 +1254,7 @@ export class GuildSession {
 	async announceSpeaker(userId) {
 		if (!this.live?.ready || this.lastAnnouncedUser === userId) return;
 		this.lastAnnouncedUser = userId;
-		const name = await this.memberName(userId);
+		const name = safeContext(await this.memberName(userId));
 		const owner = this.isOwnerId(userId);
 		// An "instructions" note: the model takes it as hard fact ("thinking" notes are too weak in conversation).
 		const lines = [
@@ -1219,7 +1268,7 @@ export class GuildSession {
 			const summary = this.memory.summaryFor(userId);
 			if (summary) {
 				this.memoryHinted.add(userId);
-				lines.push(t('runtime.memory_notes', { name, summary }));
+				lines.push(t('runtime.memory_notes', { name, summary: safeContext(summary, { keepLines: true }) }));
 			}
 		}
 		this.live.appendContext('instructions', lines.join('\n'));
@@ -1237,7 +1286,7 @@ export class GuildSession {
 			names.push(`${member.displayName}${this.isOwnerId(member.id) ? t('runtime.owner_suffix') : ''}`);
 		}
 		if (!names.length) return;
-		this.live.appendContext('instructions', t('runtime.roster_context', { prefix, names: names.join(', ') }));
+		this.live.appendContext('instructions', t('runtime.roster_context', { prefix, names: safeContext(names.join(', ')) }));
 		if (this.cfg.transcripts) this.log(t('runtime.log_context_roster', { names: names.join(', ') }));
 	}
 
