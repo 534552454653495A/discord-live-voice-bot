@@ -30,6 +30,7 @@ export default {
 		everyone: ['everyone', 'everybody', 'here', 'ping', 'tag', 'mention', 'announce'],
 		forget: ['forget', 'delete', 'remove', 'drop'],
 		record: ['record', 'transcript', 'privacy'],
+		bot: ['bot', 'use bot', 'bot command', 'robot'],
 		permission: [
 			'permission', 'perm', 'access', 'channel', 'room', 'connect', '=lock', '=join', '=enter', '=view', '=see',
 			'=read', '=write', '=send', '=speak', '=talk', '=allow', '=deny', '=block', '=only',

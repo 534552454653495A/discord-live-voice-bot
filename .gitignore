@@ -1,7 +1,9 @@
 node_modules/
-.env
-.env.local
-.env.*.local
+
+# Every .env spelling: .env.bak, .env.prod, .env.save are exactly the files people create while
+# editing a token, and this repository is public.
+.env*
+!.env.example
 
 # Runtime data: personal transcripts, DM logs, per-person notes, the active persona and test audio.
 # None of it belongs in the repository; only the example persona is tracked.

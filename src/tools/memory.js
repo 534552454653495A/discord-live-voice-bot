@@ -27,11 +27,19 @@ export const tools = [
 		description:
 			'Saves a short note to keep in mind about a person (e.g. "their cat is called Smokey", "exam on Friday"). If member is empty, the current speaker.',
 		parameters: P.obj({ member: P.str('Person name (empty = the current speaker)'), note: P.str('Short note') }, ['note']),
-		async handler(args, deps) {
+		async handler(args, deps, { name }) {
 			if (!deps.memory) return noMemory();
 			const target = await targetOf(deps, args.member);
 			if (!target) return { ok: false, spoken: t('tools.memory.no_target_remember') };
-			const entry = await deps.memory.add(target.id, args.note, { by: deps.currentSpeakerId?.() ?? null, name: target.name });
+			// Anyone may leave a note about THEMSELVES. A note about somebody else is replayed to the model
+			// whenever that person speaks, so writing one on their behalf needs the owner -- the same
+			// asymmetry forget_note already applies.
+			const speakerId = deps.currentSpeakerId?.() ?? null;
+			if (!speakerId || String(speakerId) !== String(target.id)) {
+				const denied = await ownerGate(deps, WORDS.forget, name);
+				if (denied) return denied;
+			}
+			const entry = await deps.memory.add(target.id, args.note, { by: speakerId, name: target.name });
 			if (!entry) return { ok: false, spoken: t('tools.memory.empty_note') };
 			deps.activity?.({ kind: 'memory', whoName: target.name ?? target.id, text: t('tools.memory.note_event', { note: entry.text }) });
 			return {

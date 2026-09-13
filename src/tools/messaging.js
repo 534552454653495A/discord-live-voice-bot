@@ -371,7 +371,8 @@ export const tools = [
 		name: 'use_bot',
 		description:
 			'Uses an authorised bot on the server: writes the command into a text channel in the form that bot understands (e.g. "play song ' +
-			'name" for a music bot). For music, prefer my own play_music tool first.',
+			'name" for a music bot). For music, prefer my own play_music tool first. Owner only: the other bot runs the ' +
+			'command with this bot as the requester, so it must not become a way around the owner gate.',
 		parameters: P.obj(
 			{
 				bot: P.str('Bot name (empty = the single authorised bot is used)'),
@@ -381,6 +382,7 @@ export const tools = [
 			},
 			['command'],
 		),
+		gate: { keywords: WORDS.bot },
 		async handler(args, deps) {
 			const bots = deps.memberIndex?.bots(authorizedBotSet(deps)) ?? [];
 			const authorized = bots.filter((bot) => bot.authorized);

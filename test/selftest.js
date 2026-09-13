@@ -2129,6 +2129,13 @@ await checkAsync('bots: list_bots separates authorised from unauthorised, use_bo
 		return { id: 'm9' };
 	};
 
+	// use_bot relays a command that the other bot runs on our behalf, so it is owner-gated.
+	const outsider = await callTool('use_bot', { command: 'play Faithless Insomnia' }, deps);
+	assert.equal(outsider.denied, true, 'a non-owner cannot drive another bot');
+	deps.isOwnerActive = () => true;
+	deps.ownerSaidRecently = () => true;
+	deps.ownerMatch = (words) => words[0];
+	deps.ownerTextTail = () => 'use the bot';
 	const used = await callTool('use_bot', { command: 'play Faithless Insomnia' }, deps);
 	assert.equal(used.ok, true, used.spoken);
 	assert.deepEqual(sent, ['<@b1> !play Faithless Insomnia']);

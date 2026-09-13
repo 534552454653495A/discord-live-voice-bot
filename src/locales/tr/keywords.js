@@ -29,6 +29,7 @@ export default {
 		everyone: ['herkes', 'herkesi', 'everyone', 'here', 'buradakiler', 'etiketle', 'duyuru'],
 		forget: ['unut', 'sil', 'forget'],
 		record: ['kayit', 'kaydi', 'dokum', 'gizlilik'],
+		bot: ['bot', 'botu', 'botuna', 'botla', 'robot'],
 		permission: [
 			'yetki', 'izin', 'erisim', 'kanal', 'oda', 'kilit', 'baglan', 'girebil', 'giremes', 'girsin', 'girmesin',
 			'gorebil', 'goremes', 'gorsun', 'gormesin', 'yazabil', 'yazamas', 'yazsin', 'yazmasin', 'konusabil', 'konusamas',

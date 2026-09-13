@@ -19,6 +19,16 @@ export function detectVenvPython(root) {
 	return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+/** The environment the speech server is started with: paths and tuning only, never our secrets. */
+function childEnv() {
+	const keep = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'SystemRoot', 'windir', 'TEMP', 'TMP', 'LOCALAPPDATA', 'APPDATA', 'LANG', 'CUDA_PATH', 'HF_HOME', 'TRANSFORMERS_CACHE'];
+	const env = {};
+	for (const name of keep) {
+		if (process.env[name] !== undefined) env[name] = process.env[name];
+	}
+	return { ...env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '2' };
+}
+
 export class LocalServerManager {
 	constructor({ python, script, args = [], cwd = process.cwd(), log = () => {}, spawnImpl = spawn, maxRestarts = 3, now = Date.now }) {
 		this.python = python;
@@ -72,7 +82,9 @@ export class LocalServerManager {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				windowsHide: true,
 				// OPENBLAS: numpy's thread buffers give "allocation failed" on a memory-tight machine; pointless on the GPU path.
-				env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '2' },
+				// Only what Python needs to run. Spreading process.env would hand the Discord token and the
+				// OpenAI/DeepSeek keys to third-party model code that has no use for them.
+				env: childEnv(),
 			});
 		} catch (err) {
 			this.lastError = err.message;
