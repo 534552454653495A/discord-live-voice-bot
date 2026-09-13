@@ -14,6 +14,7 @@ import { ActivityType } from 'discord.js';
 import { ChannelType } from 'discord.js';
 import { createTaskRunner, executeAction } from './agent.js';
 import { FRAME_MS, PlaybackQueue, SpeakerMixer, peakOf } from './audio.js';
+import { buildRuns, runCandidates, runEnd, runText } from './runs.js';
 import { SpeakerAttribution } from './attribution.js';
 import { parseVoiceCommand } from './commands.js';
 import { t, tList, tRaw } from './i18n/index.js';
@@ -62,7 +63,14 @@ const TURN_MEMORY = 8;
 const SPEAKER_STABLE_FRAMES = 8; // stable for 160 ms
 const SPEAKER_GAP_FRAMES = 15;
 // A line counts as clearly one person's when that person holds at least this much of its audio.
-const CLEAR_SPEAKER_SHARE = 0.7;
+// A line is finished this long after the last delta.
+const TRANSCRIPT_FLUSH_MS = 1200;
+// Two people trading turns kept restarting that timer, so one "line" could run as long as the
+// conversation did. The runs sort the names out; this stops everything downstream -- the record, the
+// model's context, a spoken command -- waiting for the room to fall silent first. 8 s sits inside the
+// gate's 15 s transcript window.
+const LINE_MAX_MS = 8000;
+const PARTS_MAX = 2000; // insurance against a pathological delta rate; bounds the buffer's memory
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -898,6 +906,11 @@ export class GuildSession {
 			this.idle.touch();
 			this.quota.sessionStarted();
 			this.exitLocalBrain(t('runtime.reason_live_back'));
+			// Half-said lines belong to the timeline that is ending: finish them while the old track can
+			// still say who spoke them, then drop the buffers, so that no position from the old timeline is
+			// ever compared against the new counter.
+			for (const key of this.transcriptBuffers.keys()) this.flushTranscript(key);
+			this.transcriptBuffers.clear();
 			this.attribution.resetSession(); // in a new session the audio position starts from 0
 			this.activity.push({ kind: 'session', text: t('runtime.live_session_open', { sessionId: sessionId ?? '?' }), meta: { sessionId } });
 			this.log(
@@ -954,7 +967,10 @@ export class GuildSession {
 			// that no amount of persuasion inside the conversation can put it back.
 			if (!this.silenced) this.playback.push(samples);
 		});
-		session.on('transcript', (event) => this.onTranscript(event));
+		session.on('transcript', (event) => {
+			if (this.live !== session) return; // a trailing delta from a socket that has already been replaced
+			this.onTranscript(event);
+		});
 		session.on('tool', (event) => this.onToolEvent(event, 'backend'));
 		session.on('backend', ({ ms }) => {
 			this.activity.push({
@@ -1178,17 +1194,14 @@ export class GuildSession {
 
 	onTranscript({ speaker, text, startMs, endMs }) {
 		const cfg = this.cfg;
-		let spokenId = null;
-		let contested = false;
+		let part = { text, startMs, endMs, id: null, sure: false, confidence: 'unsure', ids: [] };
 		if (speaker === 'user') {
-			this.attribution.noteTranscript(text, { startMs, endMs });
+			// ONE resolution per delta, made where the audio track lives and then reused for the record, for
+			// the model's context and for the run. Resolving it again downstream is how two parts of the code
+			// ended up naming two different people for the same words.
+			const hit = this.attribution.noteTranscript(text, { startMs, endMs });
 			this.lastUserDeltaAt = Date.now();
-			// How cleanly this fragment belongs to one person; a line built from contested fragments is
-			// labelled as uncertain rather than attributed to whoever happened to be louder.
-			const share = this.attribution.speakerShareAt(startMs, endMs);
-			if (share.speakers > 1 && share.share < CLEAR_SPEAKER_SHARE) contested = true;
-			// Who said it: resolved from the audio position (the arrival time misleads in a busy channel).
-			spokenId = this.attribution.speakerIdAt(startMs, endMs);
+			if (hit) part = { text, startMs, endMs, id: hit.id, sure: hit.sure, confidence: hit.confidence, ids: hit.ids };
 			// From the audio position to the wall clock: when did the user actually stop speaking?
 			const lag = Number.isFinite(endMs) ? Math.max(0, this.attribution.audioMs - endMs) : 0;
 			this.latency.userSpeechEnd(Date.now() - lag);
@@ -1207,80 +1220,139 @@ export class GuildSession {
 		}
 		let buf = this.transcriptBuffers.get(speaker);
 		if (!buf) {
-			buf = { text: '', timer: null, speakerId: null, endMs: null, contested: false };
+			buf = { parts: [], timer: null, startedAt: 0 };
 			this.transcriptBuffers.set(speaker, buf);
 		}
-		if (spokenId) buf.speakerId = spokenId;
-		if (contested) buf.contested = true;
-		if (Number.isFinite(endMs)) buf.endMs = endMs;
-		buf.text += text;
+		if (!buf.parts.length) buf.startedAt = Date.now();
+		buf.parts.push(part);
 		if (buf.timer) clearTimeout(buf.timer);
-		buf.timer = setTimeout(() => {
-			buf.timer = null;
-			const line = buf.text.replace(/\s+/g, ' ').trim();
-			const speakerId = buf.speakerId ?? this.lastSpeakerId;
-			const lineEndMs = buf.endMs;
-			const lineContested = buf.contested === true;
-			buf.contested = false;
-			buf.text = '';
-			buf.speakerId = null; // let the next line work out its own identity
-			buf.endMs = null;
+		buf.timer = null;
+		if (Date.now() - buf.startedAt >= LINE_MAX_MS || buf.parts.length >= PARTS_MAX) {
+			this.flushTranscript(speaker);
+			return;
+		}
+		buf.timer = setTimeout(() => this.flushTranscript(speaker), cfg.transcriptFlushMs ?? TRANSCRIPT_FLUSH_MS);
+	}
+
+	/**
+	 * Turns the buffered deltas into finished lines: one line per stretch of one speaker, so that two
+	 * people inside one flush come out as two lines with two names instead of one line carrying whoever
+	 * happened to speak last. Safe to call early (a session reset) and safe to call twice.
+	 */
+	flushTranscript(speaker) {
+		const cfg = this.cfg;
+		const buf = this.transcriptBuffers.get(speaker);
+		if (!buf) return;
+		// Kill the timer FIRST, always: the buffer object is reused, so a flush that leaves one armed fires
+		// again later on a buffer somebody else has since refilled.
+		if (buf.timer) clearTimeout(buf.timer);
+		buf.timer = null;
+		const parts = buf.parts;
+		buf.parts = [];
+		buf.startedAt = 0;
+		if (!parts.length) return;
+
+		if (speaker !== 'user') {
+			const line = parts
+				.map((entry) => entry.text)
+				.join('')
+				.replace(/\s+/g, ' ')
+				.trim();
 			if (!line) return;
-			if (cfg.transcripts) this.log(speaker === 'user' ? t('runtime.transcript_in', { line }) : t('runtime.transcript_out', { line }));
-			if (speaker === 'user') {
-				this.record({ kind: 'voice', direction: 'in', who: speakerId, text: line });
-				// Every finished line is labelled with whoever the audio says spoke it. Announcing a name only
-				// when the speaker changed left the model holding a stale one halfway through a conversation,
-				// which is how people ended up being called by each other's names; per line nothing goes stale.
-				if (cfg.announceSpeaker && speakerId && this.live?.ready) {
-					if (lineContested) {
-						// Two voices ran into each other here. Saying who said it would be a guess, and the
-						// assistant acts on these lines, so the guess is the expensive kind.
-						this.live.appendContext(
-							'thinking',
-							t('runtime.speaker_line_unclear', { name: safeContext(this.nameFor(speakerId)), line: safeContext(line).slice(0, 200) }),
-						);
-						if (cfg.transcripts) this.log(t('runtime.log_context_unclear', { line: line.slice(0, 40) }));
-					} else {
-						const name = safeContext(this.nameFor(speakerId));
-						const contradicts = this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser);
-						this.lastAnnouncedUser = String(speakerId);
-						// "thinking", not "instructions": this carries somebody's words, and words spoken in the
-						// channel must never arrive on the channel the model treats as hard instruction.
-						this.live.appendContext(
-							'thinking',
-							t('runtime.speaker_line', {
-								name,
-								owner: this.isOwnerId(speakerId) ? t('runtime.owner_suffix') : '',
-								line: safeContext(line).slice(0, 200),
-							}),
-						);
-						if (cfg.transcripts && contradicts) this.log(t('runtime.log_context_correction', { line: line.slice(0, 40), name }));
-					}
-				}
-				// The user started talking: empty the local audio queue (barge-in).
-				this.interruptLocalSpeech();
-			} else if (this.localMode) {
-				// Local mode: this text is turned into speech by Chatterbox and pushed to Discord.
-				this.enqueueLocalSpeech(line);
-			} else {
-				this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: line });
-			}
-			if (speaker !== 'user') return;
-			this.recentUserText = `${this.recentUserText} ${line}`.slice(-700).trim();
-			this.recentUserTextAt = Date.now();
-			this.maybeWakeByVoiceName(line);
-			// Unambiguous commands run here even when the model does not delegate; the signature cache stops doubles.
-			const command = parseVoiceCommand(line, this.store.list(), this.channelLists());
-			if (!command) return;
-			// This line's own turn: once the line is over, people cutting in do not affect the gate decision.
-			const lineTurn = { at: Date.now(), audioMs: Number.isFinite(lineEndMs) ? lineEndMs : this.attribution.audioMs };
-			void executeAction(command, { ...this.taskDeps, currentTurn: () => lineTurn })
-				.then((result) => {
-					if (result?.speak && result.text && !result.reused) this.say(result.text);
-				})
-				.catch((err) => this.log(t('runtime.command_error', { error: err.message })));
-		}, 1200);
+			if (cfg.transcripts) this.log(t('runtime.transcript_out', { line }));
+			// Local mode: this text is turned into speech by Chatterbox and pushed to Discord.
+			if (this.localMode) this.enqueueLocalSpeech(line);
+			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: line });
+			return;
+		}
+
+		const lines = [];
+		for (const run of buildRuns(parts)) {
+			const line = runText(run);
+			if (line) lines.push({ line, id: run.id, mixed: run.mixed, endMs: runEnd(run), candidates: runCandidates(run) });
+		}
+		if (!lines.length) return;
+
+		for (const item of lines) {
+			if (cfg.transcripts) this.log(t('runtime.transcript_in', { line: item.line }));
+			this.record({
+				kind: 'voice',
+				direction: 'in',
+				who: item.id,
+				text: item.line,
+				meta: item.id && !item.mixed ? undefined : { unclear: true, speakers: item.candidates },
+			});
+			if (cfg.announceSpeaker && this.live?.ready) this.announceLine(item);
+		}
+		// Once per flush, not once per line: aborting an in-flight local render twice throws the whole
+		// generation away, which is the reason the barge-in guard exists at all.
+		this.interruptLocalSpeech();
+
+		const all = lines.map((item) => item.line).join(' ');
+		this.recentUserText = `${this.recentUserText} ${all}`.slice(-700).trim();
+		this.recentUserTextAt = Date.now();
+		// Asked once over the whole flush: the bot's name from one person and the request from another is
+		// still somebody calling the bot.
+		this.maybeWakeByVoiceName(all);
+
+		for (const item of lines) this.runVoiceCommand(item);
+	}
+
+	/** A finished line may run a voice command. A line that is not provably one person's may not. */
+	runVoiceCommand(item) {
+		// parseVoiceCommand matches whole-line patterns and does not care who spoke, so on a mixed line one
+		// person's word can finish another's command -- and this path bypasses the model entirely, which
+		// means for an ungated tool there is no second check anywhere. The model still sees the line in its
+		// context and can call the tool itself, where the owner gate applies.
+		if (!item.id || item.mixed) {
+			if (this.cfg.transcripts && item.line) this.log(t('runtime.log_command_unclear', { line: item.line.slice(0, 40) }));
+			return;
+		}
+		const command = parseVoiceCommand(item.line, this.store.list(), this.channelLists());
+		if (!command) return;
+		// This LINE's own turn, from its own last position. Reusing the whole flush's final position would
+		// let a LATER speaker's audio count as "before the turn" for an EARLIER line's command, which is the
+		// widest possible window and exactly the hole the gate exists to close.
+		const lineTurn = { at: Date.now(), audioMs: Number.isFinite(item.endMs) ? item.endMs : this.attribution.audioMs };
+		const speakerId = String(item.id);
+		void executeAction(command, {
+			...this.taskDeps,
+			currentTurn: () => lineTurn,
+			// The line's own speaker, rather than whoever Discord last reported as speaking: the music queue,
+			// the memory notes and "move me" all act under this identity.
+			currentSpeakerId: () => speakerId,
+			currentSpeakerName: () => this.nameFor(speakerId),
+			currentSpeakerChannel: () => this.guild?.voiceStates.cache.get(speakerId)?.channel ?? null,
+		})
+			.then((result) => {
+				if (result?.speak && result.text && !result.reused) this.say(result.text);
+			})
+			.catch((err) => this.log(t('runtime.command_error', { error: err.message })));
+	}
+
+	/** Tells the model whose words a finished line carries, or that it cannot be told. */
+	announceLine({ line, id, candidates }) {
+		const clipped = safeContext(line).slice(0, 200);
+		if (!id) {
+			// Two voices ran into each other here. Naming one of them would be a guess, and the assistant acts
+			// on these lines, so it is the expensive kind of guess.
+			const names = candidates.length
+				? candidates.map((candidate) => safeContext(this.nameFor(candidate))).join(t('runtime.name_join'))
+				: t('runtime.someone');
+			this.live.appendContext('thinking', t('runtime.speaker_line_overlap', { names, line: clipped }));
+			if (this.cfg.transcripts) this.log(t('runtime.log_context_overlap', { line: line.slice(0, 40) }));
+			return; // lastAnnouncedUser is deliberately NOT touched: the model was told no name
+		}
+		const name = safeContext(this.nameFor(id));
+		const contradicts = this.lastAnnouncedUser && String(id) !== String(this.lastAnnouncedUser);
+		this.lastAnnouncedUser = String(id);
+		// "thinking", not "instructions": this carries somebody's words, and words spoken in the channel
+		// must never arrive on the channel the model treats as hard instruction.
+		this.live.appendContext(
+			'thinking',
+			t('runtime.speaker_line', { name, owner: this.isOwnerId(id) ? t('runtime.owner_suffix') : '', line: clipped }),
+		);
+		if (this.cfg.transcripts && contradicts) this.log(t('runtime.log_context_correction', { line: line.slice(0, 40), name }));
 	}
 
 	/** When the bot is called by name in the channel and the model stayed silent, tells it to answer. */
@@ -1329,6 +1401,11 @@ export class GuildSession {
 
 	trackSentSpeaker({ priority, active, sent }) {
 		if (!sent || !this.cfg.announceSpeaker) return;
+		// Two voices in this frame. announceSpeaker writes to the 'instructions' channel, the one the model
+		// treats as hard fact, so naming one of them here is the most expensive version of this bug. An
+		// ambiguous frame is neither counted towards a candidate nor treated as silence: the announcement
+		// simply waits for the room to settle.
+		if (!priority && active.length > 1) return;
 		const id = priority ? (this.cfg.ownerId ?? active[0] ?? null) : (active[0] ?? null);
 		if (!id) {
 			// Discord packets arrive with jitter: if a single empty frame reset the counter, the owner would never be "stable".
@@ -1693,6 +1770,10 @@ export class GuildSession {
 	/** Stops every timer this guild owns and silences it; safe to call more than once. */
 	stop() {
 		this.shuttingDown = true;
+		// A line that was still being said belongs in the record; a pending flush timer does not outlive
+		// the session that armed it.
+		for (const key of this.transcriptBuffers.keys()) this.flushTranscript(key);
+		this.transcriptBuffers.clear();
 		if (this.liveReconnectTimer) clearTimeout(this.liveReconnectTimer);
 		this.liveReconnectTimer = null;
 		if (this.idleTimer) clearInterval(this.idleTimer);

@@ -53,6 +53,8 @@ export default {
 	gate_reason_disabled: 'kapalı',
 	gate_not_heard: 'Bu komutu sahibin kendisinin söylediğini duymadım; sahip tekrar söylerse yaparım.',
 	gate_reason_not_said: 'sahip kelimeyi söylemedi',
+	gate_overlap: 'Senin üstüne konuşuldu, o sesin senin olduğundan emin olamıyorum. Ortalık sakinleyince tekrar söyle.',
+	gate_reason_overlap: 'sahip ve bir başkası aynı anda konuştu',
 	gate_not_owner: 'Bunu yalnızca bot sahibi söyleyebilir; bunu isteyen o değildi.',
 	gate_reason_not_owner: 'komutu söyleyen sahip değil',
 	gate_reason_who: ' ({who})',

@@ -593,6 +593,12 @@ export async function ownerGate(deps, keywords = null, tool = t('tools.helpers.g
 			return deny(t('tools.helpers.gate_not_heard'), t('tools.helpers.gate_reason_not_said'));
 		}
 		if (!hit.owner) {
+			if (hit.ownerOverlap) {
+				// The owner did say the word, but somebody else's voice is in the same audio. The model
+				// transcribes the SUM of the voices in a frame, so nothing downstream can say whose word it
+				// was -- and this gate runs bans, kicks and deletions.
+				return deny(t('tools.helpers.gate_overlap'), t('tools.helpers.gate_reason_overlap'));
+			}
 			const who = hit.id && typeof deps.nameFor === 'function' ? deps.nameFor(hit.id) : null;
 			const reason = t('tools.helpers.gate_reason_not_owner') + (who ? t('tools.helpers.gate_reason_who', { who }) : '');
 			return deny(t('tools.helpers.gate_not_owner'), reason);

@@ -4,6 +4,44 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-09-14
+
+### Added
+
+- **One line per speaker.** A finished transcript is now grouped into runs, one per stretch of one
+  voice, so two people inside the same flush arrive as two lines with two names instead of one line
+  carrying whoever happened to speak last. A handover that lands in the middle of a word is never cut,
+  a fragment too short to be a turn is folded into its neighbour rather than dropped, and one voice is
+  carried across a short hole nobody could identify. The grouping lives in `src/runs.js`, which is pure
+  and has no imports.
+- **A line that is not safely one person's runs no voice command.** That shortcut bypasses the model
+  entirely, so for a tool with no gate there is no second check anywhere. The model still sees the line
+  and can call the tool itself, where the owner gate applies.
+
+### Changed
+
+- **The audio track keeps every simultaneous speaker, not just the loudest.** Each stretch now records
+  who was audible and how much of it each of them held alone. Two numbers come out of it: `share` (was
+  this person here at all) and `solo` (could these words only have come from them). The second is the
+  one worth asking before acting on somebody's words, because the model is sent the sum of the voices
+  in a frame and cannot pull them apart again.
+- **The owner gate needs the owner to have been the sole voice.** "The owner held most of it" was a
+  coin toss dressed up as a fact; it is now four fifths of the stretch alone, which bounds everybody
+  else at a fifth. With owner priority on (the default) this changes nothing, because the mixer already
+  discards the other voices while the owner holds the floor. With it off, a ban asked for while
+  somebody talks over the owner is refused, and the refusal says that is why.
+- **A line is finished after eight seconds even if the room never falls silent.** Two people trading
+  turns kept restarting the flush timer, so one line could run as long as the conversation.
+- **A frame with two voices in it announces nobody.** The speaker announcement writes to the channel
+  the model treats as hard fact, so a wrong name there is the expensive kind.
+
+### Fixed
+
+- **A line spoken by one person was labelled with another's name.** The line buffer kept only the last
+  fragment's speaker, so any line that contained two voices was attributed to whoever finished it.
+- **Half-said lines are finished before the audio timeline restarts**, and a trailing fragment from a
+  socket that has already been replaced is ignored.
+
 ## [1.7.0] — 2026-09-14
 
 ### Changed

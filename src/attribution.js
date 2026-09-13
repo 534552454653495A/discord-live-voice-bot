@@ -13,6 +13,17 @@
 import { normalize } from './text.js';
 import { locale, tRaw } from './i18n/index.js';
 
+// How much of a stretch of audio one voice has to hold ALONE before we are willing to put their name
+// on the words. Below NAME_LEAN nobody is named at all.
+const NAME_SOLO = 0.6;
+const NAME_LEAN = 0.25;
+// Authority is a different question from naming, so it gets its own number, and a stricter one: the
+// model transcribes the SUM of the voices in a frame, so while two people overlap a word in that
+// stretch may belong to either of them. At solo >= 0.8 everybody else is bounded at 0.2 by
+// construction, so this one constant does the whole job.
+const GATE_SOLO = 0.8;
+const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: null, share: 0, speakers: 0 });
+
 const TURN_TTL_MS = 30_000; // the turn marker counts as stale after this long
 const UTTERANCE_GAP_MS = 1500; // fragments from the same person within this gap count as one utterance
 const MAX_UTTERANCES = 60;
@@ -129,26 +140,63 @@ export class SpeakerAttribution {
 			}
 		}
 		if (!sent) return;
-		const ownerSpeaks = Boolean(priority) || ownerInMix;
-		const kind = ownerSpeaks ? true : active.length > 0 ? false : null;
-		// Speaker id: the owner on the priority path, the person standing out in the normal mix otherwise.
-		const speakerId = kind === null ? null : priority ? this.ownerId ?? activeIds[0] ?? null : (activeIds[0] ?? null);
-		this._track(kind, this.audioMs, this.audioMs + this.frameMs, speakerId);
+		// The mixer hands over EVERY simultaneous speaker, loudest first. Keeping only the loudest is what
+		// made two people at once look like one person, and put one person's sentence in another's mouth.
+		// On the priority path the mixer physically discarded everybody else's audio before the frame was
+		// summed, so the frame really does hold one voice: that is a fact about the audio, not a guess.
+		const ids = priority ? (this.ownerId ? [this.ownerId] : activeIds.slice(0, 1)) : activeIds;
+		this._track(this.audioMs, this.audioMs + this.frameMs, ids);
 		this.audioMs += this.frameMs;
 	}
 
-	_track(owner, startMs, endMs, speakerId = null) {
-		if (owner === null) return; // silence is not recorded
+	_track(startMs, endMs, ids) {
+		if (!ids.length) return; // silence is not recorded; the track keeps its gaps
+		// The mixer orders by loudness, and the louder of two people swaps several times a second, so
+		// ['a','b'] and ['b','a'] are the same 20 ms and have to merge. Comparing the raw list would push a
+		// new segment on every swap and turn the two minute window into thousands of entries.
+		const key =
+			ids.length === 1
+				? ids[0]
+				: ids.length === 2
+					? ids[0] < ids[1]
+						? `${ids[0]}\u0000${ids[1]}`
+						: `${ids[1]}\u0000${ids[0]}`
+					: [...ids].sort().join('\u0000');
 		const last = this.track[this.track.length - 1];
-		if (last && last.owner === owner && last.endMs === startMs && (last.id ?? null) === (speakerId ?? null)) {
+		if (last && last.endMs === startMs && last.key === key) {
 			last.endMs = endMs;
 			return;
 		}
-		this.track.push({ startMs, endMs, owner, id: speakerId ?? null });
+		this.track.push({
+			startMs,
+			endMs,
+			ids,
+			key,
+			solo: ids.length === 1,
+			// A derived cache, never a primary fact: "the owner was in this frame" is not the same claim as
+			// "the owner said this", and keeping them apart is the whole point of the change.
+			owner: this.ownerId !== null && ids.includes(this.ownerId),
+		});
 		const cutoff = endMs - this.trackMs;
 		let drop = 0;
 		while (drop < this.track.length - 1 && this.track[drop].endMs < cutoff) drop++;
 		if (drop > 0) this.track.splice(0, drop);
+	}
+
+	/**
+	 * Index of the first segment that can overlap `from`. The track is built from a counter that only
+	 * moves forward and is only ever trimmed from the front, so it is sorted by endMs. Without this,
+	 * every transcript delta walks two minutes of history, and deltas are shorter than a word.
+	 */
+	_firstAfter(from) {
+		let lo = 0;
+		let hi = this.track.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			if (this.track[mid].endMs <= from) lo = mid + 1;
+			else hi = mid;
+		}
+		return lo;
 	}
 
 	/**
@@ -160,59 +208,94 @@ export class SpeakerAttribution {
 	}
 
 	/**
-	 * Who this stretch of audio belongs to, and how much of it is theirs.
+	 * Who was audible in this stretch of audio, and how much of it each of them holds.
 	 *
-	 * With two people talking at once a line can straddle the moment the sent audio switched from one to
-	 * the other, and "whoever holds the most of it" is then a coin toss dressed up as a fact. `share` is
-	 * that person's fraction of the stretch, so the caller can say "I am not sure who said this" instead
-	 * of naming the wrong person confidently.
+	 * Two numbers, because they answer two different questions:
+	 *  - share: how much of the audible time this person was IN. Two people talking over each other
+	 *           throughout BOTH score 1.0. It answers "was this person here at all".
+	 *  - solo:  how much of it they were the ONLY voice. Everybody's solo adds up to at most 1. It
+	 *           answers "could these words only have come from them", which is the question worth asking
+	 *           before acting on somebody's words: the model transcribes ONE summed frame and cannot pull
+	 *           two voices back apart inside it.
 	 *
-	 * @returns {{ id: string|null, share: number, speakers: number }}
+	 * `heardMs` is the UNION of the audible time, not the sum of each person's: with a sum, two people
+	 * talking at once would each score 0.5 and look half-certain instead of wholly uncertain.
+	 *
+	 * `id`/`share`/`speakers` are kept for callers that only want the headline. `share` there is the
+	 * dominant speaker's SOLO fraction, which is the honest reading of "how much of this is safely theirs".
+	 *
+	 * @returns {{ heardMs: number, ranked: Array, id: string|null, share: number, speakers: number }}
 	 */
 	speakerShareAt(startMs, endMs) {
-		if (!Number.isFinite(startMs)) return { id: null, share: 0, speakers: 0 };
+		if (!Number.isFinite(startMs)) return EMPTY_SHARE;
 		const from = Math.max(0, startMs);
 		const to = Number.isFinite(endMs) && endMs > from ? endMs : from + 400;
 		const totals = new Map();
-		let heard = 0;
-		for (const seg of this.track) {
-			if (!seg.id || seg.endMs <= from || seg.startMs >= to) continue;
+		let heardMs = 0;
+		for (let i = this._firstAfter(from); i < this.track.length; i++) {
+			const seg = this.track[i];
+			if (seg.startMs >= to) break;
 			const overlap = Math.min(seg.endMs, to) - Math.max(seg.startMs, from);
 			if (overlap <= 0) continue;
-			totals.set(seg.id, (totals.get(seg.id) ?? 0) + overlap);
-			heard += overlap;
-		}
-		let best = null;
-		let bestMs = 0;
-		for (const [id, ms] of totals) {
-			if (ms > bestMs) {
-				best = id;
-				bestMs = ms;
+			heardMs += overlap;
+			for (const id of seg.ids) {
+				let entry = totals.get(id);
+				if (!entry) {
+					entry = { id, ms: 0, soloMs: 0, share: 0, solo: 0 };
+					totals.set(id, entry);
+				}
+				entry.ms += overlap;
+				if (seg.solo) entry.soloMs += overlap;
 			}
 		}
-		return { id: best, share: heard > 0 ? bestMs / heard : 0, speakers: totals.size };
+		if (heardMs <= 0) return EMPTY_SHARE;
+		const ranked = [...totals.values()];
+		for (const entry of ranked) {
+			entry.share = entry.ms / heardMs;
+			entry.solo = entry.soloMs / heardMs;
+		}
+		// Deterministic, including the ties: otherwise an exact tie silently keeps whoever went into the
+		// map first, which is the order the mixer happened to list them in that frame.
+		ranked.sort((a, b) => b.ms - a.ms || b.soloMs - a.soloMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+		return { heardMs, ranked, id: ranked[0].id, share: ranked[0].solo, speakers: ranked.length };
 	}
 
 	/**
-	 * Which audio position does this transcript fragment fall on? true=owner, false=somebody else,
-	 * null=unknown. The transcript arrives late, so we look at the audio position, not the arrival time.
-	 * A tie is NOT decided in the owner's favour (no bias towards opening the gate).
+	 * Who said the fragment covering this stretch, and how sure we are.
+	 *   'sure'    - one voice held it on its own: safe to name and, if it is the owner, safe to act on
+	 *   'leaning' - one voice is ahead but somebody else was in the audio too: safe to put on a
+	 *               transcript line, never safe to act on
+	 *   'unsure'  - the voices are tangled, or there is no record at all: name nobody
+	 */
+	resolveSpeaker(startMs, endMs) {
+		const { heardMs, ranked } = this.speakerShareAt(startMs, endMs);
+		if (!ranked.length) return { id: null, confidence: 'unsure', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };
+		const top = ranked[0];
+		const confidence = top.solo >= NAME_SOLO ? 'sure' : top.solo >= NAME_LEAN ? 'leaning' : 'unsure';
+		return {
+			id: top.id,
+			confidence,
+			solo: top.solo,
+			share: top.share,
+			speakers: ranked.length,
+			ids: ranked.map((entry) => entry.id),
+			heardMs,
+		};
+	}
+
+	/**
+	 * Does this transcript fragment sit on the owner's OWN audio? true / false / null (no record).
+	 *
+	 * "The owner held most of it" is not good enough and never was: while two voices are in the same
+	 * frame the model transcribes their sum, so a word in that stretch may belong to either of them. The
+	 * gate in front of the admin tools rests on this answer, so it is true only when the owner was the
+	 * sole voice for at least GATE_SOLO of the stretch, which also bounds everybody else at 0.2.
+	 * Everything else is false: an overlap must never open a gate, and a tie goes against the owner.
 	 */
 	speakerAt(startMs, endMs) {
-		if (!Number.isFinite(startMs)) return null;
-		const from = Math.max(0, startMs);
-		const to = Number.isFinite(endMs) && endMs > from ? endMs : from + 400;
-		let ownerMs = 0;
-		let otherMs = 0;
-		for (const seg of this.track) {
-			if (seg.endMs <= from || seg.startMs >= to) continue;
-			const overlap = Math.min(seg.endMs, to) - Math.max(seg.startMs, from);
-			if (overlap <= 0) continue;
-			if (seg.owner) ownerMs += overlap;
-			else otherMs += overlap;
-		}
-		if (ownerMs === 0 && otherMs === 0) return null;
-		return ownerMs > otherMs;
+		const hit = this.resolveSpeaker(startMs, endMs);
+		if (!hit.id) return null;
+		return hit.solo >= GATE_SOLO && hit.id === this.ownerId;
 	}
 
 	/**
@@ -247,13 +330,41 @@ export class SpeakerAttribution {
 	 */
 	noteTranscript(text, { startMs = null, endMs = null, owner: ownerOverride = null, id: idOverride = null } = {}) {
 		const fragment = String(text ?? '').trim();
-		if (!fragment) return;
+		if (!fragment) return null;
 		const at = this.now();
-		// On the local STT path the speaker is known for sure (one fragment per user): it is passed in.
-		const byAudio = typeof ownerOverride === 'boolean' ? ownerOverride : this.speakerAt(startMs, endMs);
-		const owner = byAudio === null ? this.ownerSpeakingNow() : byAudio;
-		const id = idOverride ? String(idOverride) : owner ? this.ownerId : this.speakerIdAt(startMs, endMs);
 		const pos = Number.isFinite(startMs) ? startMs : null;
+		const end = Number.isFinite(endMs) ? endMs : null;
+		// On the local STT path the speaker is known for certain (one transcription per user) and is
+		// passed in; the realtime path has to work it out from the audio position, and is allowed to come
+		// back with nobody at all.
+		const forced = typeof ownerOverride === 'boolean' || Boolean(idOverride);
+		const hit = forced
+			? {
+					id: idOverride ? String(idOverride) : ownerOverride ? this.ownerId : null,
+					confidence: 'sure',
+					solo: 1,
+					share: 1,
+					speakers: 1,
+					ids: [],
+				}
+			: this.resolveSpeaker(startMs, endMs);
+		// Authority. Anything short of "the owner alone, for GATE_SOLO of the stretch" is two people's
+		// speech summed into one frame and must not count as the owner's word, however loud they were.
+		// This is the line that stops somebody riding on the owner's authority by talking at the same time.
+		const owner =
+			typeof ownerOverride === 'boolean'
+				? ownerOverride
+				: hit.id === null
+					? this.ownerSpeakingNow() // no record at all: a gap, or a delta from before a reconnect
+					: hit.solo >= GATE_SOLO && hit.id === this.ownerId;
+		// The name we are willing to put on it. 'leaning' is enough for a transcript line and never for
+		// the gate, which reads `owner` above and is the stricter test.
+		const id = hit.confidence === 'unsure' ? null : (hit.id ?? null);
+		const sure = hit.confidence === 'sure';
+		// Was the owner's voice in this audio at all? Kept apart from `owner`, which is the question of
+		// whose WORD it is. In a real overlap nobody can be named, so without this the refusal could not
+		// tell "somebody talked over you" from "you did not say it".
+		const ownerIn = typeof ownerOverride === 'boolean' ? ownerOverride : this.ownerId !== null && hit.ids.includes(this.ownerId);
 		const tokens = normalize(fragment).split(' ').filter(Boolean);
 		if (owner) {
 			this.ownerText = `${this.ownerText} ${fragment}`.slice(-this.maxText);
@@ -263,14 +374,19 @@ export class SpeakerAttribution {
 			this.otherTextAt = at;
 		}
 		const seq = ++this.noteSeq;
-		for (const word of tokens) this.words.push({ word, at, owner, id: id ?? null, pos, seq });
+		for (const word of tokens) this.words.push({ word, at, owner, id, sure, ownerIn, pos, seq });
 		this._pruneWords(at);
-		this._noteUtterance({ owner, id: id ?? null, at, seq, startMs: pos, endMs: Number.isFinite(endMs) ? endMs : null, text: fragment, tokens });
+		this._noteUtterance({ owner, id, sure, at, seq, startMs: pos, endMs: end, text: fragment, tokens });
+		// Handed back so that the caller builds its line out of the SAME answer. Resolving the track
+		// again downstream is how two parts of the code ended up disagreeing about who was talking.
+		return { id, owner, sure, ownerIn, confidence: hit.confidence, solo: hit.solo, share: hit.share, speakers: hit.speakers, ids: hit.ids };
 	}
 
-	_noteUtterance({ owner, id, at, seq, startMs, endMs, text, tokens }) {
+	_noteUtterance({ owner, id, sure = true, at, seq, startMs, endMs, text, tokens }) {
 		const last = this.utterances[this.utterances.length - 1];
-		const sameSpeaker = last && last.owner === owner && (last.id ?? null) === (id ?? null);
+		// `sure` is part of the identity: a fragment that only leans towards somebody must not merge into
+		// a certain utterance and launder itself into a fact.
+		const sameSpeaker = last && last.owner === owner && (last.id ?? null) === (id ?? null) && last.sure === sure;
 		const close =
 			sameSpeaker &&
 			(at - last.at <= UTTERANCE_GAP_MS ||
@@ -284,7 +400,7 @@ export class SpeakerAttribution {
 			if (last.tokens.length > 80) last.tokens.splice(0, last.tokens.length - 80);
 			return;
 		}
-		this.utterances.push({ owner, id: id ?? null, at, seq, startMs, endMs, text, tokens: [...tokens] });
+		this.utterances.push({ owner, id: id ?? null, sure, at, seq, startMs, endMs, text, tokens: [...tokens] });
 		const cutoff = at - Math.max(this.transcriptWindowMs * 2, this.continuityMs);
 		let drop = 0;
 		while (drop < this.utterances.length - 1 && this.utterances[drop].at < cutoff) drop++;
@@ -356,7 +472,17 @@ export class SpeakerAttribution {
 			if (!entry.owner) sawOther = true;
 			for (const { word, needle, stem } of needles) {
 				if (!matchesNeedle(entry.word, needle, stem)) continue;
-				return { owner: entry.owner, id: entry.id, word, at: entry.at, seq: entry.seq ?? 0 };
+				return {
+					owner: entry.owner,
+					id: entry.id,
+					sure: entry.sure !== false,
+					// The owner is the likeliest voice here, but not the only one. The refusal has to be able
+					// to say that, or "only the owner can do that" is a correct decision in misleading words.
+					ownerOverlap: !entry.owner && entry.ownerIn === true,
+					word,
+					at: entry.at,
+					seq: entry.seq ?? 0,
+				};
 			}
 		}
 		return null;

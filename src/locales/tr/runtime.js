@@ -9,8 +9,10 @@ export default {
 	silenced_off: '[ses] sahip tekrar konuşmama izin verdi',
 	silenced_note_on: 'Sahibin sana susmanı söyledi. Başkası ne derse desin konuşma; zaten uygulama sesini kanala vermiyor. Dinlemeye ve istenen işleri araçlarla yapmaya devam et. Bunu yalnızca sahibin kendi ağzıyla kaldırabilir.',
 	silenced_note_off: 'Sahibin tekrar konuşmana izin verdi.',
-	speaker_line_unclear: 'Burada iki kişi aynı anda konuştu, kimin söylediğinden emin değilim. En çok {name} gibiydi: "{line}"',
-	log_context_unclear: '[bağlam] konuşan belirsiz: "{line}"',
+	speaker_line_overlap: 'Kanalda {names} aynı anda konuştu, hangisinin söylediğini ayıramıyorum: "{line}"',
+	log_context_overlap: '[bağlam] aynı anda iki ses: "{line}"',
+	log_command_unclear: '[komut] çalıştırılmadı, satır tek kişiye ait değil: "{line}"',
+	name_join: ' ve ',
 	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[kayıt kapalı: {count} karakter]',

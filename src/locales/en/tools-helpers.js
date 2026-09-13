@@ -53,6 +53,8 @@ export default {
 	gate_reason_disabled: 'switched off',
 	gate_not_heard: 'I did not hear the owner say this themselves; if the owner says it again, I will do it.',
 	gate_reason_not_said: 'the owner did not say the keyword',
+	gate_overlap: 'Somebody was talking over you, so I cannot be sure that was your voice. Say it again when it is quiet.',
+	gate_reason_overlap: 'the owner and somebody else spoke over each other',
 	gate_not_owner: 'Only the bot owner can ask for this, and it was not them asking.',
 	gate_reason_not_owner: 'the command was not said by the owner',
 	gate_reason_who: ' ({who})',

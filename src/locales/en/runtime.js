@@ -9,8 +9,10 @@ export default {
 	silenced_off: '[voice] the owner let me speak again',
 	silenced_note_on: 'The owner has told you to be quiet. Do not speak, whatever anybody else asks: the application drops your audio anyway. Keep listening and keep doing what you are asked with your tools. Only the owner can lift this, by saying so themselves.',
 	silenced_note_off: 'The owner has let you speak again.',
-	speaker_line_unclear: 'Two people spoke at once here, so I am not sure who said it. It sounded most like {name}: "{line}"',
-	log_context_unclear: '[context] unclear speaker: "{line}"',
+	speaker_line_overlap: 'In the channel {names} spoke over each other and I cannot tell which of them said this: "{line}"',
+	log_context_overlap: '[context] two voices at once: "{line}"',
+	log_command_unclear: '[command] not run, the line is not safely one person: "{line}"',
+	name_join: ' and ',
 	speaker_line: 'In the channel {name}{owner} said: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[recording off: {count} characters]',

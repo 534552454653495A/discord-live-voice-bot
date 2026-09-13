@@ -1690,6 +1690,97 @@ await checkAsync('END TO END: real audio -> transcript attribution -> ban allowe
 	assert.deepEqual(actions, ['ban:Ali'], 'nothing further may happen after the refusal');
 });
 
+// The whole point of the change, at the level the owner actually feels it: a ban asked for while
+// somebody is talking over the owner does not happen. The model is sent the SUM of the two voices, so
+// nothing downstream can say whose word "ban" was -- and this gate runs bans, kicks and deletions.
+await checkAsync('END TO END: a ban is refused when somebody talks over the owner, and allowed when nobody does', async () => {
+	const actions = [];
+	const OWNER_ID = '999';
+	const OTHER_ID = '555';
+	const { deps, guild } = makeToolDeps();
+	guild.members.cache.set('1', { id: '1', displayName: 'Ali', user: { username: 'ali', bot: false }, bannable: true });
+	guild.members.ban = async (member) => actions.push(`ban:${member.displayName}`);
+	const loud = new Int16Array(SAMPLES_PER_FRAME_24K).fill(4000);
+
+	const run = ({ priority }) => {
+		const attribution = new SpeakerAttribution({ ownerId: OWNER_ID });
+		const mixer = new SpeakerMixer({ activityPeak: 1 });
+		mixer.addUser(OWNER_ID);
+		mixer.addUser(OTHER_ID);
+		if (priority) mixer.setPriority(OWNER_ID);
+		const bridge = new AudioBridge({
+			mixer,
+			playback: new PlaybackQueue(),
+			output: { write: () => true, once: () => {} },
+			getLive: () => ({ ready: true, sendAudio: () => true }),
+			onFrame: (frame) => attribution.onFrame(frame),
+		});
+		// Both of them transmitting for the whole second.
+		for (let i = 0; i < 50; i++) {
+			mixer.push(OWNER_ID, loud);
+			mixer.push(OTHER_ID, loud);
+			bridge.tick();
+		}
+		attribution.noteTranscript('ban Ali', { startMs: 0, endMs: 1000 });
+		attribution.markTurn();
+		deps.commandSpeaker = (words, options) => attribution.commandSpeaker(words, options);
+		deps.lastUtterance = (options) => attribution.lastUtterance(options);
+		deps.transcriptLagging = (options) => attribution.transcriptLagging(options);
+		deps.isOwnerActive = () => attribution.isOwnerActive();
+		deps.ownerSaidRecently = (words, ms) => attribution.ownerSaidRecently(words, ms);
+		return attribution;
+	};
+
+	// Priority off: the guest's voice really is in the frame the model transcribed.
+	run({ priority: false });
+	const refused = await callTool('ban_member', { member: 'Ali', confirm: true }, deps);
+	assert.equal(refused.ok, false, 'an overlap must never open the gate');
+	assert.deepEqual(actions, [], 'and nothing may happen');
+	assert.match(String(refused.reason ?? refused.spoken ?? ''), /over|üst/i, 'the refusal says it was an overlap');
+
+	// Priority on (the default): the mixer physically discarded the guest's audio before summing the
+	// frame, so the model only ever heard the owner. Tightened where it was wrong, untouched where it
+	// was right.
+	run({ priority: true });
+	const asked = await callTool('ban_member', { member: 'Ali' }, deps);
+	assert.equal(asked.needs_confirmation, true, asked.spoken);
+	const allowed = await callTool('ban_member', { member: 'Ali', confirm: true }, deps);
+	assert.equal(allowed.ok, true, allowed.spoken);
+	assert.deepEqual(actions, ['ban:Ali']);
+});
+
+check('SpeakerAttribution: no run of frames lets a shared stretch of audio open the gate', () => {
+	// A property rather than an example: the arithmetic behind `solo` is a union over segments, and the
+	// kind of mistake that matters there (counting a shared frame as somebody's own) does not show up in
+	// any single hand-written case.
+	let seed = 987654321;
+	const rnd = (n) => {
+		seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+		return seed % n;
+	};
+	const cast = ['owner', 'x', 'y'];
+	for (let round = 0; round < 200; round++) {
+		const attribution = new SpeakerAttribution({ ownerId: 'owner' });
+		for (let frame = 0; frame < 60; frame++) {
+			const active = cast.filter(() => rnd(3) === 0);
+			attribution.onFrame({ active, sent: true });
+		}
+		const from = rnd(800);
+		const to = from + 100 + rnd(600);
+		const share = attribution.speakerShareAt(from, to);
+		const owner = share.ranked.find((entry) => entry.id === 'owner');
+		const opened = attribution.speakerAt(from, to) === true;
+		if (!opened) continue;
+		assert.ok(owner, `round ${round}: the gate opened with no owner audio at all`);
+		// The gate opened, so the owner was alone for at least 80% of it, which bounds everybody else at
+		// 20% by construction. Anyone above that share means the arithmetic is wrong.
+		for (const entry of share.ranked) {
+			if (entry.id === 'owner') continue;
+			assert.ok(entry.share <= 0.2 + 1e-9, `round ${round}: ${entry.id} held ${entry.share} of a stretch the gate opened on`);
+		}
+	}
+});
+
 check('SpeakerAttribution: a new session resets the audio position (no drift after a reconnect)', () => {
 	const attribution = new SpeakerAttribution({ ownerId: 'owner' });
 	for (let i = 0; i < 50; i++) attribution.onFrame({ priority: true, active: ['owner'] });
