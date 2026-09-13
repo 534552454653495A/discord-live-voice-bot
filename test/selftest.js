@@ -1199,7 +1199,9 @@ await checkAsync('admin: channel create/edit/lock/delete, role create/edit/delet
 	assert.equal(confirmedDelete.ok, true, confirmedDelete.spoken);
 	assert.equal(deleted, 'test');
 
-	// An expired confirmation is not accepted
+	// An expired confirmation is not accepted. Pending questions live in a per-guild store of their own
+	// (they have to outlive the per-call deps object), so the test injects one to age it by hand.
+	deps.pendingConfirmations = new Map();
 	assert.equal((await callTool('delete_role', { role: 'Sample' }, deps)).needs_confirmation, true);
 	deps.pendingConfirmations.set('delete_role', { target: 'r5', at: Date.now() - 60_000 });
 	assert.equal((await callTool('delete_role', { role: 'Sample', confirm: true }, deps)).ok, false, 'a stale confirmation is invalid');
