@@ -2,7 +2,7 @@
 export default {
 	ring_capacity: 'Ring capacity must be a positive integer: {capacity}',
 	speaking: 'speaking: {ids}',
-	output_blocked: 'audio output is blocked; {count} frames dropped',
+	output_blocked: 'the audio output stalled; {count} frames ({ms} ms) of speech were dropped',
 	connection_destroyed: 'the voice connection was destroyed',
 	state_timeout: 'the voice connection never reached the {status} state (currently: {current})',
 	join_cancelled: 'join cancelled (a newer request arrived)',

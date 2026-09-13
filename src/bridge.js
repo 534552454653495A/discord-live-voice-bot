@@ -47,7 +47,8 @@ export class AudioBridge {
 		this.upState = { last: 0 };
 		this.primed = false;
 		this.backpressure = false;
-		this.dropped = 0;
+		this.dropped = 0; // every frame ever dropped (the panel reads this)
+		this.dropRun = 0; // frames dropped in the stall going on right now
 		this.nextAt = 0;
 		this.timer = null;
 		this.lastActive = '';
@@ -109,7 +110,7 @@ export class AudioBridge {
 		// buffering stale audio forever; 'drain' resumes the flow.
 		if (this.backpressure) {
 			this.dropped++;
-			if (this.dropped % 250 === 1) this.log(t('voice.output_blocked', { count: this.dropped }));
+			this.dropRun++;
 		} else {
 			// PassThrough keeps a view onto the buffer it is given: hand it a copy of the shared buffer.
 			const ok = this.output.write(frame ? Buffer.from(frame) : SILENCE);
@@ -117,6 +118,12 @@ export class AudioBridge {
 				this.backpressure = true;
 				this.output.once('drain', () => {
 					this.backpressure = false;
+					// Reported per stall, with how much speech it cost. A running total said "501 frames
+					// dropped" hours into a session and read as a ten second outage that had never happened.
+					if (this.dropRun > 0) {
+						this.log(t('voice.output_blocked', { count: this.dropRun, ms: this.dropRun * FRAME_MS }));
+						this.dropRun = 0;
+					}
 				});
 			}
 		}

@@ -208,7 +208,11 @@ export class VoiceSession {
 
 		this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
 		this.player.on('error', (err) => this.log(t('voice.player_error'), err.message));
-		this.pcmStream = new PassThrough();
+		// A 20 ms stereo frame is 3840 bytes, so the stream's default 16 KB cushion is about 85 ms: one
+		// garbage collection or one slow tick of the event loop overflows it, and an overflowing output
+		// drops the bot's own speech rather than delaying it. 64 KB is around a third of a second, enough
+		// to ride out a hiccup while still far too small to let stale audio pile up behind a real stall.
+		this.pcmStream = new PassThrough({ highWaterMark: 64 * 1024 });
 		this.pcmStream.on('error', (err) => this.log(t('voice.stream_error'), err.message));
 		this.player.play(createAudioResource(this.pcmStream, { inputType: StreamType.Raw }));
 		connection.subscribe(this.player);

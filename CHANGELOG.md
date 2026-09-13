@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] — 2026-09-14
+
+### Fixed
+
+- **The bot lost pieces of its own speech.** A 20 ms stereo frame is 3840 bytes, so the output stream's
+  default 16 KB cushion held about 85 ms: one garbage collection or one slow tick of the event loop
+  overflowed it, and an overflowing output drops the bot's speech rather than delaying it. The cushion
+  is now a third of a second, which rides out a hiccup while staying far too small to let stale audio
+  pile up behind a real stall.
+- **The stall message was misleading.** It reported a running total, so "501 frames dropped" two minutes
+  into a session read as a ten second outage that had never happened. Each stall is now reported once,
+  when it ends, with how much speech it actually cost.
+
 ## [1.8.1] — 2026-09-14
 
 ### Fixed

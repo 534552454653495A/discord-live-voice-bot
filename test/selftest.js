@@ -2741,12 +2741,19 @@ await checkAsync('a blocked output drops frames and carries on after drain', asy
 			setTimeout(cb, 40);
 		},
 	});
-	const bridge = new AudioBridge({ mixer, playback, output, getLive: () => null });
+	const logged = [];
+	const bridge = new AudioBridge({ mixer, playback, output, getLive: () => null, log: (line) => logged.push(String(line)) });
 	bridge.tick(); // the first write fills the queue -> false
 	assert.equal(writes, 1);
 	assert.equal(bridge.tick().dropped, 1); // while blocked, the frame is dropped
+	assert.equal(bridge.tick().dropped, 2);
 	assert.equal(writes, 1);
+	assert.deepEqual(logged, [], 'nothing is reported while the stall is still going on');
 	await new Promise((r) => setTimeout(r, 80)); // the write completes and 'drain' fires
+	// One line per stall, saying how much speech it cost. A running total read as a ten second outage
+	// that had never happened.
+	assert.equal(logged.length, 1, logged.join(' | '));
+	assert.match(logged[0], /40/, 'two frames is 40 ms of speech');
 	bridge.tick();
 	assert.equal(writes, 2);
 	bridge.stop();
