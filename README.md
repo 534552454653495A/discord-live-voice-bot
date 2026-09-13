@@ -16,8 +16,10 @@ destructive action is locked behind a voice-based owner gate that proves *who ac
 - **Real-time voice conversation.** Opus from Discord is decoded, mixed and streamed to the model as
   24 kHz PCM in 20 ms frames; the reply is streamed back the same way. Typical latency from "user stops
   talking" to "first audio out" is around one second.
-- **54 server tools, 25 of them owner-gated.** Messages, DMs, members, roles, channels, channel
-  permissions and layout, moderation, invites, audit log, music, notes and conversation summaries.
+- **107 server tools, 65 of them owner-gated.** Messages, DMs, members, roles, channels and their
+  layout and permissions, threads and forum posts, reactions, pins and polls, emoji and stickers,
+  scheduled events, auto-moderation, webhooks, moderation, invites, the audit log, server settings,
+  music, notes and conversation summaries.
 - **Its own music player.** yt-dlp + ffmpeg, search or direct link, queue, and automatic **ducking** —
   the music drops while the bot speaks and comes back when it stops.
 - **Per-person memory.** "Remember that my cat is called Smoke" is stored per user and quietly handed to
@@ -237,7 +239,7 @@ src/
   music.js        yt-dlp + ffmpeg player with ducking
   localbrain.js   offline chat loop      localstt.js  offline ears
   panel.js        local admin panel      memory.js    per-person notes
-  tools/          the 54 model-callable tools
+  tools/          the 107 model-callable tools
   locales/        en and tr string bundles
   i18n/           locale lookup
 tools/            Chatterbox server and install scripts

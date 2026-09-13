@@ -29,6 +29,14 @@ import toolsSession from './tools-session.js';
 import toolsMusic from './tools-music.js';
 import toolsMemory from './tools-memory.js';
 import toolsSummary from './tools-summary.js';
+import toolsThreads from './tools-threads.js';
+import toolsReactions from './tools-reactions.js';
+import toolsExpressions from './tools-expressions.js';
+import toolsEvents from './tools-events.js';
+import toolsAutomod from './tools-automod.js';
+import toolsWebhooks from './tools-webhooks.js';
+import toolsServer from './tools-server.js';
+import toolsIdentity from './tools-identity.js';
 
 export default {
 	boot,
@@ -62,5 +70,13 @@ export default {
 		music: toolsMusic,
 		memory: toolsMemory,
 		summary: toolsSummary,
+		identity: toolsIdentity,
+		server: toolsServer,
+		webhooks: toolsWebhooks,
+		automod: toolsAutomod,
+		events: toolsEvents,
+		expressions: toolsExpressions,
+		reactions: toolsReactions,
+		threads: toolsThreads,
 	},
 };

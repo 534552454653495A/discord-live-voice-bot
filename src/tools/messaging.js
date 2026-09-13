@@ -1,6 +1,6 @@
 // Messaging tools: send, read, edit, delete, DM, commands to other bots.
 
-import { t } from '../i18n/index.js';
+import { t, tList } from '../i18n/index.js';
 import { formatMessages } from '../reader.js';
 import { balanceCodeFences, normalize, stripDictationTail } from '../text.js';
 import {
@@ -27,6 +27,41 @@ import { findChannelByName } from '../text.js';
 // The DM rate limit is kept process-wide (so the model cannot fire off DMs back to back); tests reset it via resetDmLimiter.
 const dmLimiter = new SlidingLimiter();
 export const resetDmLimiter = () => dmLimiter.reset();
+
+/**
+ * The channel a message tool should act on. A DM is not a guild channel, so resolveTextChannel can never
+ * find one by name; when the request is about a private conversation we look it up by person, or fall
+ * back to the last DM the bot sent, which is what "I wrote to the wrong person, delete it" means.
+ */
+async function resolveMessageChannel(deps, { channel, dm }) {
+	if (channel) {
+		const named = resolveTextChannel(deps, channel);
+		if (named) return named;
+	}
+	const wantsDm = dm !== undefined && dm !== null && String(dm).trim() !== '';
+	if (wantsDm) {
+		const asked = String(dm).trim();
+		const last = deps.lastDirectMessage?.() ?? null;
+		// "the last one" / "that person" resolves to the conversation we just had.
+		const useLast = last && (tList('keywords.last_dm_words').includes(normalize(asked)) || normalize(last.name ?? '') === normalize(asked));
+		const member = useLast ? null : await findMember(deps, asked);
+		const channelId = useLast ? last.channelId : null;
+		if (channelId) return deps.client?.channels?.cache?.get(channelId) ?? (await deps.client?.channels?.fetch(channelId).catch(() => null)) ?? null;
+		if (member) return await member.createDM().catch(() => null);
+		return null;
+	}
+	// No channel and no person named: the configured default channel first, exactly as before, and only
+	// when there is none do we fall back to the conversation the bot was last in.
+	const fallback = resolveTextChannel(deps, null);
+	if (fallback) return fallback;
+	const last = deps.lastDirectMessage?.() ?? null;
+	if (last?.channelId) {
+		const cached = deps.client?.channels?.cache?.get(last.channelId);
+		if (cached) return cached;
+		return (await deps.client?.channels?.fetch(last.channelId).catch(() => null)) ?? null;
+	}
+	return null;
+}
 
 export const tools = [
 	defineTool({
@@ -207,7 +242,10 @@ export const tools = [
 				return { ok: false, spoken: t('tools.messaging.dm_rate_limited') };
 			}
 			try {
-				await member.send({ content: text.slice(0, 2000) });
+				const sentDm = await member.send({ content: text.slice(0, 2000) });
+				// Remembered so "delete that" and "fix that" can find the private conversation again: a DM
+				// lives in its own channel, which resolveTextChannel cannot reach by name.
+				deps.noteDirectMessage?.({ channelId: sentDm?.channelId ?? sentDm?.channel?.id ?? null, memberId: member.id, name: displayName(member) });
 				const who = displayName(member);
 				deps.log?.(t('tools.messaging.log_dm_sent', { who }));
 				return { ok: true, spoken: t('tools.messaging.dm_sent', { who }), data: { to: who } };
@@ -224,14 +262,15 @@ export const tools = [
 			"Deletes messages. My own messages (own:true) freely; other people's only when the owner asks for it. With message_id a single " +
 			'message, otherwise the last N messages.',
 		parameters: P.obj({
-			channel: P.str('Channel name (empty = the default one)'),
+			channel: P.str('Channel name (empty = the default one, or the last direct message when dm is given)'),
+			dm: P.str('Act in a private conversation instead of a channel: the person\'s name, or the word for "the last one"'),
 			message_id: P.str('Id of the single message to delete (optional)'),
 			count: P.int('How many messages (1-20, default 1)'),
 			own: P.bool("Only the bot's own messages (no owner permission needed)"),
 			from: P.str("Only this person's messages (optional)"),
 		}),
 		async handler(args, deps, { name }) {
-			const channel = resolveTextChannel(deps, args.channel);
+			const channel = await resolveMessageChannel(deps, { channel: args.channel, dm: args.dm });
 			if (!channel) return { ok: false, spoken: t('tools.messaging.no_delete_channel') };
 			const selfId = selfIdOf(deps);
 
@@ -307,7 +346,8 @@ export const tools = [
 			'the latest message holding that text.',
 		parameters: P.obj(
 			{
-				channel: P.str('Channel name (empty = the default one)'),
+				channel: P.str('Channel name (empty = the default one, or the last direct message when dm is given)'),
+				dm: P.str('Edit in a private conversation instead of a channel: the person, or the word for "the last one"'),
 				message_id: P.str('Id of the message to edit (optional)'),
 				contains: P.str('My latest own message containing this text (optional)'),
 				text: P.str('The new message text'),
@@ -315,7 +355,7 @@ export const tools = [
 			['text'],
 		),
 		async handler(args, deps) {
-			const channel = resolveTextChannel(deps, args.channel);
+			const channel = await resolveMessageChannel(deps, { channel: args.channel, dm: args.dm });
 			if (!channel) return { ok: false, spoken: t('tools.messaging.no_edit_channel') };
 			const selfId = selfIdOf(deps);
 			const text = balanceCodeFences(stripDictationTail(String(args.text ?? '')));

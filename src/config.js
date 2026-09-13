@@ -198,6 +198,8 @@ export function loadConfig(env = process.env) {
 		musicDuckVolume: num(env.MUSIC_DUCK_VOLUME, 12, { min: 0, max: 100 }) / 100,
 		musicDuckHoldMs: num(env.MUSIC_DUCK_HOLD_MS, 700, { min: 0 }),
 		musicDir: str(env.MUSIC_DIR),
+		// Show the playing track under the bot's name; the status line comes back when the music stops.
+		presenceMusic: bool(env.PRESENCE_MUSIC, true),
 		musicMaxMinutes: num(env.MUSIC_MAX_MINUTES, 20, { min: 0 }),
 		ytDlpPath: str(env.YTDLP_PATH),
 		// Downloading yt-dlp and running it is a supply-chain decision; 0 makes the operator install it.

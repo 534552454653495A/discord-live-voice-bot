@@ -308,6 +308,35 @@ describe('voice_disconnect', () => {
 	});
 });
 
+describe('the bot acting on its own private messages', () => {
+	function dmFixture() {
+		const made = makeDeps({ owner: true });
+		let messages = [{ id: 'm1', author: { id: 'bot' }, content: 'wrong person', createdTimestamp: 2, deletable: true, delete: async () => (messages = []) }];
+		const dm = { id: 'dm1', name: 'DM', isDMBased: () => true, messages: { fetch: async () => new Map(messages.map((m) => [m.id, m])) } };
+		made.deps.client = { user: { id: 'bot' }, channels: { cache: new Map([['dm1', dm]]), fetch: async () => dm } };
+		made.deps.lastDirectMessage = () => ({ channelId: 'dm1', memberId: '1', name: 'Jane Doe' });
+		made.deps.cfg = { ...made.deps.cfg, textChannelId: null };
+		return { ...made, left: () => messages };
+	}
+
+	it('deletes a message it sent privately, which lives in no guild channel', async () => {
+		const { deps, left } = dmFixture();
+		const result = await callTool('delete_messages', { own: true, count: 1, dm: 'last' }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.equal(left().length, 0);
+	});
+
+	it('still uses the configured channel when nothing points at a private conversation', async () => {
+		const { deps } = dmFixture();
+		deps.cfg = { ...deps.cfg, textChannelId: '10' };
+		const result = await callTool('delete_messages', { own: true, count: 1 }, deps);
+		// That channel holds no message of ours, so it says so. What matters is that it looked THERE and
+		// did not wander into the private conversation, and did not give up on which channel to use.
+		assert.equal(result.ok, false);
+		assert.doesNotMatch(result.spoken, /which channel/i, result.spoken);
+	});
+});
+
 describe('two-step confirmation', () => {
 	// The realtime path hands every tool call a FRESH deps object so the owner gate can pin the turn.
 	// Anything the first call remembers has to survive that, or the question is asked forever.

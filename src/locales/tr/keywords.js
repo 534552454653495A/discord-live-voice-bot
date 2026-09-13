@@ -4,6 +4,23 @@
 // permission vocabularies, colour names and audit-log labels. The gate compares these words against
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
+	// Ways of saying "the private conversation we just had" (delete_messages / edit_message dm argument).
+	last_dm_words: ['son', 'sonuncu', 'o', 'onu', 'az onceki', 'az önceki', 'biraz onceki'],
+	// How the bot's own status line and online state may be spoken (src/tools/identity.js).
+	presence_status: {
+		online: ['cevrimici', 'çevrimiçi', 'aktif', 'online'],
+		idle: ['bosta', 'boşta', 'uzakta', 'idle'],
+		dnd: ['rahatsiz etmeyin', 'rahatsız etmeyin', 'mesgul', 'meşgul', 'dnd'],
+		invisible: ['gorunmez', 'görünmez', 'cevrimdisi', 'çevrimdışı', 'gizli'],
+	},
+	presence_activity: {
+		playing: ['oynuyor', 'oyun', 'oynuyorum'],
+		listening: ['dinliyor', 'dinliyorum', 'dinleme'],
+		watching: ['izliyor', 'izliyorum', 'izleme'],
+		competing: ['yarisiyor', 'yarışıyor'],
+		streaming: ['yayinda', 'yayında', 'yayin'],
+	},
+	no_picture_words: ['yok', 'kaldir', 'kaldır', 'sil', 'temizle', 'kapat'],
 	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).
 	no_category_words: ['yok', 'kategorisiz', 'hicbiri', 'kategori disi', 'disari', 'en ust', 'ust seviye', 'bagimsiz'],
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
@@ -30,6 +47,15 @@ export default {
 		forget: ['unut', 'sil', 'forget'],
 		record: ['kayit', 'kaydi', 'dokum', 'gizlilik'],
 		bot: ['bot', 'botu', 'botuna', 'botla', 'robot'],
+		thread: ['thread', 'konu', 'alt baslik', 'altbaslik', 'tartisma'],
+		pin: ['sabit', 'sabitle', 'pinle', 'pin', 'tuttur'],
+		reaction: ['tepki', 'reaksiyon', 'emoji tepki'],
+		emoji: ['emoji', 'emote', 'cikartma', 'sticker', 'ifade'],
+		event: ['etkinlik', 'event', 'takvim', 'planla'],
+		automod: ['otomod', 'automod', 'otomatik moderasyon', 'filtre', 'kural'],
+		webhook: ['webhook', 'kanca'],
+		server: ['sunucu', 'server', 'temizle', 'prune', 'widget', 'banner'],
+		identity: ['avatar', 'banner', 'profil', 'takma', 'nick', 'durum', 'oynuyor', 'gorunum', 'resim', 'hakkinda', 'biyografi'],
 		permission: [
 			'yetki', 'izin', 'erisim', 'kanal', 'oda', 'kilit', 'baglan', 'girebil', 'giremes', 'girsin', 'girmesin',
 			'gorebil', 'goremes', 'gorsun', 'gormesin', 'yazabil', 'yazamas', 'yazsin', 'yazmasin', 'konusabil', 'konusamas',

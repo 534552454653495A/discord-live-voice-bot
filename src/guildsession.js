@@ -10,6 +10,7 @@
 // text provider, the local Chatterbox server) are handed in by src/index.js; nothing here reaches for
 // a singleton of its own.
 
+import { ActivityType } from 'discord.js';
 import { ChannelType } from 'discord.js';
 import { createTaskRunner, executeAction } from './agent.js';
 import { FRAME_MS, PlaybackQueue, SpeakerMixer, peakOf } from './audio.js';
@@ -68,7 +69,7 @@ const CLEAR_SPEAKER_SHARE = 0.7; // a silent frame gap of up to 300 ms (packet j
 const WAKE_WORDS = tList('runtime.wake_words');
 const WAKE_FILLER_WORDS = tList('runtime.wake_filler_words');
 
-const SETTING_NAMES = ['transcripts', 'announce_speaker', 'owner_priority', 'idle_close_minutes', 'local_tts', 'record', 'brain'];
+const SETTING_NAMES = ['quiet', 'transcripts', 'announce_speaker', 'owner_priority', 'idle_close_minutes', 'local_tts', 'record', 'brain'];
 
 // Spoken aliases -> canonical setting name; the switch below only knows the canonical names.
 const SETTING_ALIASES = tRaw('runtime.setting_aliases') ?? {};
@@ -176,15 +177,21 @@ export class GuildSession {
 					maxMinutes: cfg.musicMaxMinutes,
 					log,
 					// this.activity is the guild-tagged wrapper built above, not the process-wide log.
-					onTrackStart: (track) =>
+					onTrackStart: (track) => {
+						// The track goes under the bot's name as well, so people see what is playing.
+						this.showPresence(track);
 						this.activity.push({
 							kind: 'music',
 							whoName: track.requestedBy ?? null,
 							text: t('runtime.music_playing', { title: track.title }),
 							meta: { source: track.kind },
-						}),
+						});
+					},
 					onTrackEnd: (track, { queueEmpty }) => {
-						if (queueEmpty) this.activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
+						if (queueEmpty) {
+							this.showPresence(null);
+							this.activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
+						}
 					},
 					onError: (track, message) =>
 						this.activity.push({ kind: 'music', text: t('runtime.music_failed', { title: track.title, error: message }) }),
@@ -264,6 +271,12 @@ export class GuildSession {
 		this.sentSilentFrames = 0;
 		// userId -> when we last heard them; used to tell a quiet channel from a crowded one.
 		this.recentSpeakers = new Map();
+		// The private conversation the bot most recently wrote in, and the status line to return to.
+		this.lastDm = null;
+		this.presence = null;
+		// Told to be quiet by the owner. This is a state, not a request to the model: while it is on, the
+		// bot's audio is dropped before it reaches the channel, so nobody else can talk it into speaking.
+		this.silenced = false;
 
 		this.taskDeps = this.buildDeps();
 		this.runTask = createTaskRunner(this.taskDeps);
@@ -351,6 +364,16 @@ export class GuildSession {
 			store,
 			cfg,
 			log,
+			client: this.client,
+			// The last private conversation the bot started, so "delete that" can find it again: a DM has
+			// its own channel and cannot be looked up by name.
+			noteDirectMessage: (entry) => {
+				session.lastDm = entry;
+			},
+			lastDirectMessage: () => session.lastDm ?? null,
+			// What the status line should say when no music is playing.
+			setDefaultPresence: (presence) => session.setDefaultPresence(presence),
+			defaultPresence: () => session.presence ?? null,
 			openai,
 			provider,
 			textClient: provider.textClient,
@@ -484,6 +507,7 @@ export class GuildSession {
 
 	/** Tells the model to "say this" (it comes out in the channel); with the local brain Chatterbox reads it. */
 	say(text) {
+		if (this.silenced) return;
 		if (this.brain === 'local') {
 			this.enqueueLocalSpeech(String(text ?? ''));
 			this.localBrain.note(t('runtime.note_self_said', { text }));
@@ -554,6 +578,7 @@ export class GuildSession {
 
 	/** Splits the model's spoken text into sentences and turns them into audio (local mode). */
 	enqueueLocalSpeech(text) {
+		if (this.silenced) return;
 		this.ttsPending += text;
 		const { sentences, rest } = splitSentences(this.ttsPending);
 		this.ttsPending = rest;
@@ -919,7 +944,9 @@ export class GuildSession {
 				this.lastAssistantSpokeAt = Date.now();
 				this.idle.touch(); // while the bot is speaking the session must not count as "idle"
 			}
-			this.playback.push(samples);
+			// Silenced by the owner: the audio is thrown away here, at the last step before the channel, so
+			// that no amount of persuasion inside the conversation can put it back.
+			if (!this.silenced) this.playback.push(samples);
 		});
 		session.on('transcript', (event) => this.onTranscript(event));
 		session.on('tool', (event) => this.onToolEvent(event, 'backend'));
@@ -1180,12 +1207,10 @@ export class GuildSession {
 			if (cfg.transcripts) this.log(speaker === 'user' ? t('runtime.transcript_in', { line }) : t('runtime.transcript_out', { line }));
 			if (speaker === 'user') {
 				this.record({ kind: 'voice', direction: 'in', who: speakerId, text: line });
-				// Who said this line is decided by where it sits in the audio, which is more reliable than
-				// whoever happened to be announced last. With several people talking the line is always
-				// labelled; with one or two, only when it contradicts the last announcement.
+				// Every finished line is labelled with whoever the audio says spoke it. Announcing a name only
+				// when the speaker changed left the model holding a stale one halfway through a conversation,
+				// which is how people ended up being called by each other's names; per line nothing goes stale.
 				if (cfg.announceSpeaker && speakerId && this.live?.ready) {
-					const crowded = this.recentSpeakerCount() >= 3;
-					const contradicts = this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser);
 					if (lineContested) {
 						// Two voices ran into each other here. Saying who said it would be a guess, and the
 						// assistant acts on these lines, so the guess is the expensive kind.
@@ -1194,8 +1219,9 @@ export class GuildSession {
 							t('runtime.speaker_line_unclear', { name: safeContext(this.nameFor(speakerId)), line: safeContext(line).slice(0, 200) }),
 						);
 						if (cfg.transcripts) this.log(t('runtime.log_context_unclear', { line: line.slice(0, 40) }));
-					} else if (crowded || contradicts) {
+					} else {
 						const name = safeContext(this.nameFor(speakerId));
+						const contradicts = this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser);
 						this.lastAnnouncedUser = String(speakerId);
 						// "thinking", not "instructions": this carries somebody's words, and words spoken in the
 						// channel must never arrive on the channel the model treats as hard instruction.
@@ -1334,6 +1360,46 @@ export class GuildSession {
 		if (this.cfg.transcripts) this.log(t('runtime.log_context_speaker', { name, owner: owner ? t('runtime.owner_tag') : '' }));
 	}
 
+	/**
+	 * Owner's silence. While it is on the bot listens and still runs tools, it just does not speak; the
+	 * model is told so that it stops trying, and the audio is dropped anyway if it does.
+	 */
+	setSilenced(quiet) {
+		const next = quiet !== false;
+		if (next === this.silenced) return this.silenced;
+		this.silenced = next;
+		if (next) this.playback.clear();
+		this.log(t(next ? 'runtime.silenced_on' : 'runtime.silenced_off'));
+		this.activity.push({ kind: 'session', text: t(next ? 'runtime.silenced_on' : 'runtime.silenced_off') });
+		this.live?.appendContext('instructions', t(next ? 'runtime.silenced_note_on' : 'runtime.silenced_note_off'));
+		return this.silenced;
+	}
+
+	/** Remembers the status line to go back to once the music stops. */
+	setDefaultPresence(presence) {
+		this.presence = presence ?? null;
+	}
+
+	/**
+	 * Puts the playing track under the bot's name, and returns to whatever the status line was when the
+	 * music stops. Presence belongs to the account, not to a guild, so with several servers the most
+	 * recent track wins; that is also what a person watching the bot's profile would expect.
+	 */
+	showPresence(track = null) {
+		const user = this.client?.user;
+		if (!user?.setPresence || this.cfg.presenceMusic === false) return;
+		try {
+			if (track?.title) {
+				user.setPresence({ activities: [{ name: t('tools.identity.now_playing', { title: String(track.title).slice(0, 128) }), type: ActivityType.Listening }], status: this.presence?.status ?? 'online' });
+				return;
+			}
+			const back = this.presence;
+			user.setPresence({ activities: back?.text ? [{ name: back.text, type: back.type ?? ActivityType.Playing }] : [], status: back?.status ?? 'online' });
+		} catch {
+			/* presence is cosmetic: never let it break the session */
+		}
+	}
+
 	/** Tells the model who is in the channel (when the session opens and on joins/leaves). */
 	announceRoster(prefix = t('runtime.roster_prefix')) {
 		if (!this.live?.ready || !this.voice.channelId || !this.guild) return;
@@ -1467,6 +1533,12 @@ export class GuildSession {
 		const key = SETTING_ALIASES[alias] ?? alias;
 		const asBool = (input, fallback) => parseBool(input, fallback);
 		switch (key) {
+			case 'quiet':
+			case 'silence': {
+				const quiet = asBool(value, !this.silenced);
+				this.setSilenced(quiet);
+				return quiet;
+			}
 			case 'transcripts':
 				cfg.transcripts = asBool(value, cfg.transcripts);
 				return cfg.transcripts;

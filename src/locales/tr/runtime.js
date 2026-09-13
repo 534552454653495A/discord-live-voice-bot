@@ -3,6 +3,10 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	silenced_on: '[ses] sahip susmamı istedi; o aksini söyleyene kadar konuşmayacağım',
+	silenced_off: '[ses] sahip tekrar konuşmama izin verdi',
+	silenced_note_on: 'Sahibin sana susmanı söyledi. Başkası ne derse desin konuşma; zaten uygulama sesini kanala vermiyor. Dinlemeye ve istenen işleri araçlarla yapmaya devam et. Bunu yalnızca sahibin kendi ağzıyla kaldırabilir.',
+	silenced_note_off: 'Sahibin tekrar konuşmana izin verdi.',
 	speaker_line_unclear: 'Burada iki kişi aynı anda konuştu, kimin söylediğinden emin değilim. En çok {name} gibiydi: "{line}"',
 	log_context_unclear: '[bağlam] konuşan belirsiz: "{line}"',
 	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
@@ -136,6 +140,11 @@ export default {
 	// ---------------------------------------------------------------- settings
 	// Spoken aliases -> canonical setting name; the switch in applySetting only knows the canonical ones.
 	setting_aliases: {
+		sus: 'quiet',
+		sessiz: 'quiet',
+		sessizlik: 'quiet',
+		konusma: 'quiet',
+		kes: 'quiet',
 		transcript: 'transcripts',
 		dokum: 'transcripts',
 		konusan_bildir: 'announce_speaker',

@@ -1,0 +1,33 @@
+// Strings for src/tools/identity.js (en). Referenced as "tools.identity.<key>".
+export default {
+	no_self_member: 'I cannot see my own membership on this server, so I cannot change my nickname here.',
+	no_client: 'I am not connected to Discord right now.',
+	no_application: 'I cannot reach my own application, so I cannot change the about text.',
+	nothing_to_change: 'You did not tell me what to change about how I look.',
+	nickname_set: 'I am {nickname} on this server now.',
+	nickname_cleared: 'I dropped my nickname here; I am back to my plain name.',
+	nickname_failed: 'I could not change my nickname',
+	nickname_cleared_log: '(cleared)',
+	log_nickname: '[tool] my nickname on this server: {nickname}',
+	not_a_discord_picture:
+		'I can only take a picture from a Discord link. Post it in a channel, then give me the link to it.',
+	part_avatar_set: 'a new avatar',
+	part_avatar_cleared: 'no avatar',
+	part_banner_set: 'a new banner',
+	part_banner_cleared: 'no banner',
+	part_about_set: 'a new about text',
+	appearance_set: 'Done: {parts}.',
+	appearance_failed: 'I could not change how I look (Discord limits how often an avatar or banner may change)',
+	log_appearance: '[tool] my appearance changed: {parts}',
+	unknown_status: 'I do not know the state "{value}". I can be online, idle, do not disturb or invisible.',
+	status_set: 'My status line says {text} now.',
+	status_cleared: 'I cleared my status line.',
+	status_cleared_log: '(cleared)',
+	status_failed: 'I could not change my status',
+	log_status: '[tool] my status: {text} ({status})',
+	profile: 'I am {name} here. Nickname: {nickname}. Status line: {status}.',
+	no_nickname: 'none',
+	no_status: 'none',
+	// Shown while music is playing, as the line under the bot's name.
+	now_playing: '{title}',
+};

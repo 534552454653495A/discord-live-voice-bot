@@ -4,6 +4,23 @@
 // permission vocabularies, colour names and audit-log labels. The gate compares these words against
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
+	// Ways of saying "the private conversation we just had" (delete_messages / edit_message dm argument).
+	last_dm_words: ['last', 'the last one', 'that one', 'it', 'latest', 'previous'],
+	// How the bot's own status line and online state may be spoken (src/tools/identity.js).
+	presence_status: {
+		online: ['online', 'active', 'available'],
+		idle: ['idle', 'away'],
+		dnd: ['dnd', 'do not disturb', 'busy'],
+		invisible: ['invisible', 'offline', 'hidden'],
+	},
+	presence_activity: {
+		playing: ['playing', 'play'],
+		listening: ['listening', 'listen'],
+		watching: ['watching', 'watch'],
+		competing: ['competing', 'compete'],
+		streaming: ['streaming', 'stream'],
+	},
+	no_picture_words: ['none', 'no picture', 'remove', 'clear', 'off'],
 	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).
 	no_category_words: ['none', 'no category', 'nowhere', 'root', 'top level', 'uncategorised', 'uncategorized', 'outside'],
 	// Spoken and written spellings of on/off, beyond the universal 1/0/true/false/yes/no set.
@@ -31,6 +48,15 @@ export default {
 		forget: ['forget', 'delete', 'remove', 'drop'],
 		record: ['record', 'transcript', 'privacy'],
 		bot: ['bot', 'use bot', 'bot command', 'robot'],
+		thread: ['thread', 'threads', 'subthread', 'discussion'],
+		pin: ['pin', 'pinned', 'unpin', 'sticky'],
+		reaction: ['reaction', 'react', 'reacted'],
+		emoji: ['emoji', 'emote', 'sticker', 'expression'],
+		event: ['event', 'schedule', 'scheduled'],
+		automod: ['automod', 'automoderation', 'filter', 'rule'],
+		webhook: ['webhook', 'hook'],
+		server: ['server', 'guild', 'prune', 'vanity', 'widget', 'banner'],
+		identity: ['avatar', 'banner', 'profile', 'nickname', 'status', 'presence', 'playing', 'appearance', 'picture', 'bio', 'about'],
 		permission: [
 			'permission', 'perm', 'access', 'channel', 'room', 'connect', '=lock', '=join', '=enter', '=view', '=see',
 			'=read', '=write', '=send', '=speak', '=talk', '=allow', '=deny', '=block', '=only',

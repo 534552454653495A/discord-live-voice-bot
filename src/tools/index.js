@@ -10,6 +10,14 @@ import { tools as musicTools } from './music.js';
 import { tools as roleTools } from './roles.js';
 import { tools as sessionTools } from './session.js';
 import { tools as summaryTools } from './summary.js';
+import { tools as threadsTools } from './threads.js';
+import { tools as reactionsTools } from './reactions.js';
+import { tools as expressionsTools } from './expressions.js';
+import { tools as eventsTools } from './events.js';
+import { tools as automodTools } from './automod.js';
+import { tools as webhooksTools } from './webhooks.js';
+import { tools as serverTools } from './server.js';
+import { tools as identityTools } from './identity.js';
 import { ownerGate } from './helpers.js';
 import { t } from '../i18n/index.js';
 
@@ -24,6 +32,14 @@ for (const list of [
 	musicTools,
 	memoryTools,
 	summaryTools,
+	identityTools,
+	serverTools,
+	webhooksTools,
+	automodTools,
+	eventsTools,
+	expressionsTools,
+	reactionsTools,
+	threadsTools,
 ]) {
 	for (const tool of list) {
 		if (REGISTRY.has(tool.name)) throw new Error(`tool defined twice: ${tool.name}`);

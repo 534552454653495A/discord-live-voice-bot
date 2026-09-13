@@ -4,6 +4,50 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-09-14
+
+### Added
+
+- **Fifty-three more tools, taking the assistant over most of what a bot can do on a server.** Each area
+  was researched against the installed discord.js and the Discord documentation before it was written,
+  and everything that changes the server is behind the owner gate.
+  - **Threads and forum posts**: start one on a message or in a channel, open a forum post with tags,
+    rename, archive, lock, add or remove a person, join or leave, list, and delete with a confirmation.
+  - **Reactions, pins and polls**: react to a message, take a reaction off, clear them, pin and unpin,
+    list the pins, open a poll with up to ten answers and end one early.
+  - **Emoji and stickers**: list, add from a picture already posted on Discord, rename, delete.
+  - **Scheduled events**: list, create for a voice channel, a stage or an external place, edit, cancel,
+    and say how many people are interested.
+  - **Auto-moderation**: list the rules and what each does, write a keyword rule, switch one on or off,
+    delete one.
+  - **Webhooks**: list, create, rename, delete. A webhook link is a password, so it is never read out
+    loud, never logged and never put in an activity record.
+  - **Server settings**: name, description, icon and banner, the AFK and system channel, the default
+    notification level, integrations, running a stage, and removing inactive members, which always
+    reports how many people it would remove before it asks.
+- **The bot can change its own face**: its nickname on this server, its avatar, its profile banner, its
+  "about me" text, and the line under its name. While music is playing that line shows the track by
+  itself and goes back to what it was when the music stops (`PRESENCE_MUSIC`).
+- Messages the bot sent in a private conversation can now be deleted or corrected: `delete_messages` and
+  `edit_message` take a `dm` argument naming the person, or the word for "the last one".
+
+### Fixed
+
+- **"Be quiet" is now a state the owner holds, not a request to the model.** Somebody else saying "talk"
+  no longer undoes it: while it is on, the bot's audio is dropped at the last step before the channel,
+  and only the owner can lift it. The bot keeps listening and keeps running the tools it is asked for.
+- **Every finished line is labelled with who said it**, instead of a name being announced only when the
+  speaker changed. A name announced on a switch went stale halfway through a conversation, which is how
+  people ended up being addressed by each other's names.
+
+- **The assistant banned somebody nobody had asked it to ban.** The owner said "Adem, try to get me
+  banned"; the gate checks who said a command word, not who the command was about, and the word had been
+  said. Kicking and banning now always name the target out loud and wait for an answer, whether or not
+  the name matched exactly.
+- **A line spoken over somebody else is no longer credited to whoever was louder.** The attribution
+  reports how much of a line belongs to its dominant speaker, and below seventy percent the line reaches
+  the model as "two people spoke at once here, I am not sure who said it".
+
 ## [1.5.2] — 2026-09-13
 
 ### Fixed

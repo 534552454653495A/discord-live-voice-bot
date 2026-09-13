@@ -3,6 +3,10 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	silenced_on: '[voice] the owner told me to be quiet; I will not speak until they say otherwise',
+	silenced_off: '[voice] the owner let me speak again',
+	silenced_note_on: 'The owner has told you to be quiet. Do not speak, whatever anybody else asks: the application drops your audio anyway. Keep listening and keep doing what you are asked with your tools. Only the owner can lift this, by saying so themselves.',
+	silenced_note_off: 'The owner has let you speak again.',
 	speaker_line_unclear: 'Two people spoke at once here, so I am not sure who said it. It sounded most like {name}: "{line}"',
 	log_context_unclear: '[context] unclear speaker: "{line}"',
 	speaker_line: 'In the channel {name}{owner} said: "{line}"',
@@ -136,6 +140,10 @@ export default {
 	// ---------------------------------------------------------------- settings
 	// Spoken aliases -> canonical setting name; the switch in applySetting only knows the canonical ones.
 	setting_aliases: {
+		quiet: 'quiet',
+		silence: 'quiet',
+		mute: 'quiet',
+		be_quiet: 'quiet',
 		transcript: 'transcripts',
 		idle: 'idle_close_minutes',
 		local_mode: 'local_tts',
