@@ -4,6 +4,59 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-09-13
+
+### Added
+
+- **Channels can be moved and reorganised by voice.** `edit_channel` now takes `parent` (move the channel
+  into a category, or a word meaning "none" to take it out), `position` (0 is first, a large number is
+  last) and `sync_permissions` (drop the channel's own overrides and follow its category). `list_channels`
+  reports the categories and which channels sit in each, so the assistant can name them.
+- **`voice_disconnect`**: throws somebody out of the voice channel without removing them from the server.
+  It is deliberately separate from `kick_member`, and both descriptions now say which is which.
+- **Memory search.** `recall_notes` takes a `search` argument that looks through the notes of everybody,
+  matching whole words, so "what do you remember about X" no longer depends on guessing whose note it is.
+  The assistant is also told to save a stated preference straight away and to search before saying it does
+  not remember something.
+- `YTDLP_AUTO_DOWNLOAD` (default on): turn it off to install yt-dlp yourself rather than have the bot
+  fetch a binary from GitHub and run it.
+
+### Fixed
+
+- `voice_mute` called `member.voice.setDeafen`, which does not exist in discord.js, so the whole tool threw
+  and nobody could be muted. The method is `setDeaf`.
+- **Speaker attribution in a busy channel.** The running "now speaking: X" commentary flipped many times a
+  minute and was often wrong for the sentence being answered. Once three or more people have been heard in
+  the last twenty seconds it is dropped, and each finished transcript line is labelled with the speaker
+  resolved from its position in the audio instead.
+- **Untrusted text no longer reaches the model's instruction channel.** Transcript lines, the wake-word
+  nudge, display names, the channel roster and saved notes are somebody else's words; they go on the
+  thinking channel now, with newlines and control characters stripped, so a nickname or a note cannot
+  read as a new instruction.
+- **`RECORD_TRANSCRIPTS=0` now really keeps text off disk.** Only three event kinds went through the
+  redacting path, so the owner's words behind a gate decision, a tool's arguments (a DM body, a note) and
+  a spoken music query were still written to `data/activity.jsonl` and served by the export endpoint.
+  Redaction moved into `ActivityLog`, which every producer has to pass through.
+- **`use_bot` was ungated**: it relays a command that another bot executes with this bot as the requester,
+  so an allow-listed moderation bot turned it into a way around the owner gate. It is owner-gated now.
+- **`remember_note` could write a note about somebody else**, which is replayed to the model whenever that
+  person speaks. A note about anyone but the speaker now needs the owner, as `forget_note` already did.
+- **`play_music` accepted any link**, so a member could make the bot fetch an address on the owner's own
+  network, and yt-dlp's stderr came back as spoken text. Links are restricted to known media hosts and
+  failures are reported in the bot's own words.
+- The music queue had no cap and the reply limiter had no process-wide budget; the speech server inherited
+  the Discord token and the API keys it has no use for; `.gitignore` covered three `.env` spellings.
+- Relative channel targets ("the room below") are matched in English as well as the active language,
+  because the tool schemas are English and the model translates the phrase before sending it.
+
+### Changed
+
+- `src/guildsession.js`: every per-guild piece of state (mixer, playback, attribution, music, the local
+  brain, reconnect and turn bookkeeping, speaker state and the tool dependencies) moved out of the
+  orchestrator into a `GuildSession`. `src/index.js` went from 1726 lines to 447 and now holds only
+  configuration, the shared services, event routing, the panel and shutdown. Behaviour is unchanged; this
+  is the groundwork for serving more than one server at a time.
+
 ## [1.3.0] — 2026-09-13
 
 ### Added

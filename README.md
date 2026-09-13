@@ -16,8 +16,8 @@ destructive action is locked behind a voice-based owner gate that proves *who ac
 - **Real-time voice conversation.** Opus from Discord is decoded, mixed and streamed to the model as
   24 kHz PCM in 20 ms frames; the reply is streamed back the same way. Typical latency from "user stops
   talking" to "first audio out" is around one second.
-- **53 server tools, 23 of them owner-gated.** Messages, DMs, members, roles, channels, channel
-  permissions, moderation, invites, audit log, music, notes and conversation summaries.
+- **54 server tools, 25 of them owner-gated.** Messages, DMs, members, roles, channels, channel
+  permissions and layout, moderation, invites, audit log, music, notes and conversation summaries.
 - **Its own music player.** yt-dlp + ffmpeg, search or direct link, queue, and automatic **ducking** —
   the music drops while the bot speaks and comes back when it stops.
 - **Per-person memory.** "Remember that my cat is called Smoke" is stored per user and quietly handed to
@@ -144,6 +144,7 @@ answer. That is where the rest of the surface lives:
 | "what was said today" | Summarises the recent conversation |
 | "who joined the server last?" | Reads the channel you point it at and answers |
 | *(owner)* "ban him", "give Ali the chill role", "lock the channel", "only the chill role can join this room" | Admin tools, owner voice only |
+| *(owner)* "move this channel under Lounge", "put it at the bottom", "throw him out of voice" | Channel layout and voice moderation |
 
 ### Slash commands
 
@@ -205,7 +206,8 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 
 ```
 src/
-  index.js        orchestrator: Discord events, sessions, fallbacks
+  index.js        configuration, shared services, Discord event routing
+  guildsession.js everything that belongs to one server: audio, session, tools
   live.js         GPT-Live WebSocket session and tool dispatch
   audio.js        mixing, resampling, ring buffers
   bridge.js       the 20 ms send/receive loop
@@ -215,7 +217,7 @@ src/
   music.js        yt-dlp + ffmpeg player with ducking
   localbrain.js   offline chat loop      localstt.js  offline ears
   panel.js        local admin panel      memory.js    per-person notes
-  tools/          the 53 model-callable tools
+  tools/          the 54 model-callable tools
   locales/        en and tr string bundles
   i18n/           locale lookup
 tools/            Chatterbox server and install scripts
