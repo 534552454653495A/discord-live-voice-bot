@@ -41,6 +41,73 @@ describe('audio.js', () => {
 		assert.equal(m.rings.get('x').length, 0, 'the other buffers must be emptied while the priority speaker talks');
 	});
 
+	// Live failure: four people in the channel, the owner speaks, and the line came back attributed to
+	// whoever else had a microphone open. Two causes, both here: "somebody is speaking" was decided at a
+	// peak of 50 (a fan, breathing, a keyboard), and the owner lost the floor on the first missing packet.
+	it('does not mistake an open microphone for a speaker', () => {
+		const m = new SpeakerMixer();
+		const speech = new Int16Array(480).fill(3000);
+		const roomNoise = new Int16Array(480).fill(120); // well above the old bar of 50, far below speech
+		for (let i = 0; i < 10; i++) {
+			m.push('speaker', speech);
+			m.push('noisy', roomNoise);
+			m.push('quiet', new Int16Array(480).fill(20));
+			m.tick();
+		}
+		const { active } = m.tick();
+		assert.deepEqual(active, ['speaker'], 'only the person actually speaking is on the list');
+	});
+
+	it('keeps the sentence with its speaker across the gaps between words', () => {
+		const m = new SpeakerMixer();
+		const speech = new Int16Array(480).fill(3000);
+		const roomNoise = new Int16Array(480).fill(120);
+		const seen = [];
+		for (let i = 0; i < 40; i++) {
+			// The speaker's packets arrive in bursts with 60 ms of jitter in between, which is what a
+			// sentence really looks like coming out of Discord; the other microphone is open throughout.
+			if (i % 6 < 3) m.push('speaker', speech);
+			m.push('noisy', roomNoise);
+			seen.push(m.tick().active[0] ?? null);
+		}
+		assert.deepEqual([...new Set(seen.slice(4))], ['speaker'], 'the floor must not change hands inside a sentence');
+	});
+
+	it('hands the room over once the speaker really stops', () => {
+		const m = new SpeakerMixer();
+		const speech = new Int16Array(480).fill(3000);
+		for (let i = 0; i < 6; i++) {
+			m.push('first', speech);
+			m.tick();
+		}
+		for (let i = 0; i < 30; i++) m.tick(); // 600 ms of silence: past the half second that ends a turn
+		for (let i = 0; i < 4; i++) {
+			m.push('second', speech);
+			m.tick();
+		}
+		assert.deepEqual(m.tick().active, ['second'], 'the next person to speak owns the line');
+	});
+
+	it('the priority speaker rides out packet jitter but gives the room back after a real pause', () => {
+		const m = new SpeakerMixer();
+		m.setPriority('o');
+		const speech = new Int16Array(480).fill(3000);
+		for (let i = 0; i < 4; i++) {
+			m.push('o', speech);
+			m.tick();
+		}
+		m.push('x', speech);
+		assert.equal(m.tick().priority, true, '80 ms without a packet is jitter, not the end of the sentence');
+		for (let i = 0; i < 30; i++) m.tick(); // the owner really has stopped
+		let frame = null;
+		for (let i = 0; i < 3; i++) {
+			m.push('x', speech);
+			frame = m.tick();
+		}
+		assert.equal(frame.priority, false, 'the room is handed back');
+		assert.ok(frame.active.includes('x'), 'and the person now talking is the one on the line');
+	});
+
 	it('reports the absolute peak and clips the mix at the int16 ceiling', () => {
 		assert.equal(peakOf(new Int16Array([1, -7, 3])), 7);
 		const out = new Int16Array([30000, 0]);

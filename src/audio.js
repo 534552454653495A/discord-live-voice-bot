@@ -143,17 +143,60 @@ export class Ring {
 	}
 }
 
+// "There is audio here" and "this person is speaking" are two different questions, and answering the
+// second with the first is what puts one person's sentence in somebody else's mouth. A peak of 50 out
+// of 32767 is a quiet room through an open microphone: breathing, a fan, a keyboard. The bar for
+// speech is the one the per-user transcriber already uses.
+const SPEECH_PEAK = 400;
+// Speech has to clear that bar for two frames (40 ms) before it counts, so one click is not a speaker.
+const SPEECH_ONSET_FRAMES = 2;
+// It then stays that person's turn for half a second after their last loud frame. Discord sends no
+// packets during a pause, and a gap shorter than ~500 ms is a gap between words, not the end of a
+// sentence -- the same threshold Craig (the recording bot) uses to tell a real silence from jitter
+// before it fills one in. Without the hold the label flickered between everyone in the room and every
+// pause for breath handed the sentence to whoever had the noisiest microphone.
+const SPEECH_HOLD_FRAMES = 25;
+// The priority speaker keeps the channel to themselves for the same half second of quiet, but only
+// while their packets are still arriving...
+const FLOOR_HOLD_FRAMES = 25;
+// ...where "still arriving" tolerates 100 ms, which is where Craig stops calling a gap jitter. The old
+// code gave the floor away on a single missing packet, so a sentence was cut into pieces that were
+// then shared out between the people who happened to be breathing at the time.
+const FLOOR_JITTER_FRAMES = 5;
+const LONG_AGO = -1e9;
+
 /**
  * Per-speaker buffers summed into one 20 ms frame per tick.
  * Keeps each speaker's audio separate until the very last step so that
  * per-user features (solo listening, speaker announcements) stay possible.
+ *
+ * Each speaker also gets a small voice-activity state machine. The model is sent ONE mixed stream, so
+ * the `active` list returned here is the only record of who said what: it is what later decides whose
+ * sentence a transcript line was. It therefore has to answer "who is speaking", not "whose microphone
+ * is open".
  */
 export class SpeakerMixer {
-	constructor({ frameSamples = SAMPLES_PER_FRAME_24K, bufferFrames = 10, activityPeak = 50 } = {}) {
+	constructor({
+		frameSamples = SAMPLES_PER_FRAME_24K,
+		bufferFrames = 10,
+		activityPeak = 50,
+		speechPeak = SPEECH_PEAK,
+		onsetFrames = SPEECH_ONSET_FRAMES,
+		holdFrames = SPEECH_HOLD_FRAMES,
+		floorHoldFrames = FLOOR_HOLD_FRAMES,
+		jitterFrames = FLOOR_JITTER_FRAMES,
+	} = {}) {
 		this.frameSamples = frameSamples;
 		this.bufferSamples = frameSamples * bufferFrames;
 		this.activityPeak = activityPeak;
+		this.speechPeak = speechPeak;
+		this.onsetFrames = onsetFrames;
+		this.holdFrames = holdFrames;
+		this.floorHoldFrames = floorHoldFrames;
+		this.jitterFrames = jitterFrames;
 		this.rings = new Map();
+		this.voices = new Map(); // id -> { loud, speechAt, audioAt, energy }
+		this.frames = 0;
 		this.priorityId = null;
 		this.tmp = new Int16Array(frameSamples);
 		this.out = new Int16Array(frameSamples);
@@ -165,6 +208,45 @@ export class SpeakerMixer {
 
 	removeUser(id) {
 		this.rings.delete(id);
+		this.voices.delete(id);
+	}
+
+	_voice(id) {
+		let voice = this.voices.get(id);
+		if (!voice) {
+			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0 };
+			this.voices.set(id, voice);
+		}
+		return voice;
+	}
+
+	/**
+	 * One frame of this speaker's audio, loud or not. Every known speaker is noted on every tick, so
+	 * that a hold runs out on its own when somebody simply stops sending packets.
+	 */
+	_note(id, peak) {
+		const voice = this._voice(id);
+		// A smoothed level, so that "the loudest person" is the one holding the floor and not whoever
+		// produced the sharpest transient inside these 20 ms.
+		voice.energy = voice.energy * 0.7 + peak * 0.3;
+		if (peak >= this.speechPeak) {
+			voice.loud++;
+			if (voice.loud >= this.onsetFrames) voice.speechAt = this.frames;
+		} else {
+			voice.loud = 0;
+		}
+		if (peak > this.activityPeak) voice.audioAt = this.frames;
+		return voice;
+	}
+
+	/** Is this person mid-sentence (the gaps between their words included)? */
+	_speaking(voice) {
+		return this.frames - voice.speechAt <= this.holdFrames;
+	}
+
+	/** Does the priority speaker still own the channel: spoke recently AND is still sending packets. */
+	_holdsFloor(voice) {
+		return this.frames - voice.speechAt <= this.floorHoldFrames && this.frames - voice.audioAt <= this.jitterFrames;
 	}
 
 	push(id, samples) {
@@ -197,41 +279,45 @@ export class SpeakerMixer {
 	tick() {
 		const out = this.out;
 		out.fill(0);
-		const active = [];
+		this.frames++;
 
 		// 1) If the priority speaker is talking, only their audio goes out.
 		if (this.priorityId) {
 			const ring = this.rings.get(this.priorityId);
-			if (ring && ring.length > 0) {
-				const n = ring.read(this.tmp, this.frameSamples);
-				const peak = peakOf(this.tmp, n);
-				if (peak > this.activityPeak) {
-					out.set(this.tmp.subarray(0, n));
-					// Keep the other rings from piling up: their audio for this frame is discarded (it is not
-					// sent while the owner speaks anyway), otherwise 200 ms of stale audio arrives once the
-					// owner goes quiet.
-					for (const [id, other] of this.rings) {
-						if (id !== this.priorityId && other.length > 0) other.read(this.tmp, this.frameSamples);
-					}
-					return { pcm: out, active: [this.priorityId], priority: true };
+			const n = ring && ring.length > 0 ? ring.read(this.tmp, this.frameSamples) : 0;
+			const voice = this._note(this.priorityId, n > 0 ? peakOf(this.tmp, n) : 0);
+			if (this._holdsFloor(voice)) {
+				if (n > 0) out.set(this.tmp.subarray(0, n));
+				// Keep the other rings from piling up: their audio for this frame is discarded (it is not
+				// sent while the owner speaks anyway), otherwise 200 ms of stale audio arrives once the
+				// owner goes quiet. Their state is still noted, so that somebody who was mid-sentence does
+				// not come out of the pause looking like a brand new speaker.
+				for (const [id, other] of this.rings) {
+					if (id === this.priorityId) continue;
+					const m = other.length > 0 ? other.read(this.tmp, this.frameSamples) : 0;
+					this._note(id, m > 0 ? peakOf(this.tmp, m) : 0);
 				}
-				this._addToOut(out, this.tmp, n); // the owner is quiet: fold them into the normal mix
+				return { pcm: out, active: [this.priorityId], priority: true };
 			}
+			if (n > 0) this._addToOut(out, this.tmp, n); // the owner is quiet: fold them into the normal mix
 		}
 
-		const peaks = [];
+		const heard = [];
 		for (const [id, ring] of this.rings) {
 			if (id === this.priorityId) continue;
-			if (ring.length === 0) continue;
-			const n = ring.read(this.tmp, this.frameSamples);
-			if (n === 0) continue;
-			const peak = this._addToOut(out, this.tmp, n);
-			if (peak > this.activityPeak) peaks.push({ id, peak });
+			const n = ring.length > 0 ? ring.read(this.tmp, this.frameSamples) : 0;
+			const peak = n > 0 ? this._addToOut(out, this.tmp, n) : 0;
+			const voice = this._note(id, peak);
+			if (this._speaking(voice)) heard.push({ id, energy: voice.energy });
 		}
+		// The priority speaker can be mid-sentence without owning the floor (they went quiet for longer
+		// than the hold, so the room was given back): they are still one of the people speaking here, and
+		// the line still has to carry their name.
+		const priorityVoice = this.priorityId ? this.voices.get(this.priorityId) : null;
+		if (priorityVoice && this._speaking(priorityVoice)) heard.push({ id: this.priorityId, energy: priorityVoice.energy });
 		// Loudest person first: the "dominant speaker" (the speaking notification) is read from here.
-		peaks.sort((a, b) => b.peak - a.peak);
-		for (const entry of peaks) active.push(entry.id);
-		return { pcm: out, active, priority: false };
+		heard.sort((a, b) => b.energy - a.energy);
+		return { pcm: out, active: heard.map((entry) => entry.id), priority: false };
 	}
 }
 

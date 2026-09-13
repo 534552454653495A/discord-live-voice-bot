@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-09-14
+
+### Changed
+
+- **The mixer now decides who is speaking, instead of whose microphone is open.** Every speaker gets a
+  small voice-activity state machine: speech has to clear the same bar the per-user transcriber uses
+  (a peak of 400, not 50, which is a fan or a keyboard) for two frames, and it then stays that person's
+  turn for half a second afterwards, because the gaps between words are part of the sentence. The
+  dominant speaker is chosen on a smoothed level rather than on the sharpest transient inside a single
+  20 ms frame. The model is sent one mixed stream, so this list is the only record of who said what,
+  and it is what decides whose sentence a transcript line was.
+- **The priority speaker keeps the room through packet jitter.** The owner used to lose the floor on a
+  single missing packet, so their sentence was cut into pieces and the pieces were shared out among
+  whoever else happened to have an open microphone. A pause now has to last past the point where it
+  stops being jitter (100 ms of no packets, or half a second of quiet) before the room is handed back.
+  The thresholds follow the ones the Craig recording bot uses to tell jitter from a real silence.
+
+### Fixed
+
+- **A line said by one person was attributed to another** in a channel with several people in it. Both
+  causes are in the mixer changes above.
+
 ## [1.6.2] — 2026-09-14
 
 ### Fixed

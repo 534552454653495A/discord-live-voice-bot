@@ -250,16 +250,24 @@ check('SpeakerMixer: while the priority speaker talks, only their audio is sent'
 	const m = new SpeakerMixer();
 	m.setPriority('owner');
 	m.addUser('owner');
-	m.push('owner', new Int16Array(SAMPLES_PER_FRAME_24K).fill(5000));
-	m.push('other', new Int16Array(SAMPLES_PER_FRAME_24K).fill(3000));
-	let frame = m.tick();
+	// Speech is established over two frames: one loud frame is a click, not a speaker.
+	let frame = null;
+	for (let i = 0; i < 2; i++) {
+		m.push('owner', new Int16Array(SAMPLES_PER_FRAME_24K).fill(5000));
+		m.push('other', new Int16Array(SAMPLES_PER_FRAME_24K).fill(3000));
+		frame = m.tick();
+	}
 	assert.equal(frame.priority, true);
 	assert.deepEqual(frame.active, ['owner']);
 	assert.equal(frame.pcm[0], 5000, 'the other speaker must not be mixed in');
 
-	// once the owner goes quiet, mixing is normal again
-	m.push('other', new Int16Array(SAMPLES_PER_FRAME_24K).fill(3000));
-	frame = m.tick();
+	// The owner keeps the room through the gaps between words; once they have really stopped (half a
+	// second, the point where a pause stops being jitter) mixing is normal again.
+	for (let i = 0; i < 26; i++) m.tick();
+	for (let i = 0; i < 2; i++) {
+		m.push('other', new Int16Array(SAMPLES_PER_FRAME_24K).fill(3000));
+		frame = m.tick();
+	}
 	assert.equal(frame.priority, false);
 	assert.equal(frame.pcm[0], 3000);
 	assert.deepEqual(frame.active, ['other']);
@@ -270,12 +278,27 @@ check('SpeakerMixer: sums two speakers and orders them by loudness', () => {
 	const m = new SpeakerMixer();
 	m.addUser('a');
 	m.addUser('b');
-	m.push('a', new Int16Array(SAMPLES_PER_FRAME_24K).fill(100));
-	m.push('b', Int16Array.from([20000, ...new Int16Array(SAMPLES_PER_FRAME_24K - 1).fill(30000)]));
-	const { pcm, active } = m.tick();
-	assert.equal(pcm[0], 20100);
-	assert.equal(pcm[1], 30100);
-	assert.deepEqual(active, ['b', 'a'], 'the loudest (dominant) speaker comes first');
+	let frame = null;
+	for (let i = 0; i < 2; i++) {
+		m.push('a', new Int16Array(SAMPLES_PER_FRAME_24K).fill(1000));
+		m.push('b', Int16Array.from([20000, ...new Int16Array(SAMPLES_PER_FRAME_24K - 1).fill(30000)]));
+		frame = m.tick();
+	}
+	assert.equal(frame.pcm[0], 21000);
+	assert.equal(frame.pcm[1], 31000);
+	assert.deepEqual(frame.active, ['b', 'a'], 'the loudest (dominant) speaker comes first');
+});
+check('SpeakerMixer: a microphone that is merely open is not a speaker', () => {
+	const m = new SpeakerMixer();
+	m.addUser('speaking');
+	m.addUser('breathing');
+	let frame = null;
+	for (let i = 0; i < 4; i++) {
+		m.push('speaking', new Int16Array(SAMPLES_PER_FRAME_24K).fill(3000));
+		m.push('breathing', new Int16Array(SAMPLES_PER_FRAME_24K).fill(120));
+		frame = m.tick();
+	}
+	assert.deepEqual(frame.active, ['speaking'], 'room noise must not be credited with the sentence');
 });
 check('SpeakerMixer: clips a sum that overflows int16', () => {
 	const m = new SpeakerMixer();
