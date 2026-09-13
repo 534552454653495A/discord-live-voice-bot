@@ -24,6 +24,13 @@ function makeDeps({ owner = false } = {}) {
 		id: 'v1',
 		name: 'General',
 		type: ChannelType.GuildVoice,
+		parent: null,
+		parentId: null,
+		rawPosition: 0,
+		edit: async (patch) => sent.push({ edited: patch }),
+		setParent: async (parent, options) => sent.push({ parent: parent?.name ?? null, lock: options?.lockPermissions === true }),
+		setPosition: async (position) => sent.push({ position }),
+		lockPermissions: async () => sent.push({ synced: true }),
 		permissionOverwrites: {
 			edit: async (target, patch) => sent.push({ overwrite: patch, target: target?.id ?? target }),
 			delete: async (id) => sent.push({ deleted: id }),
@@ -222,6 +229,82 @@ describe('owner gate: who said the command', () => {
 		assert.equal(waited, 1, 'the gate has to wait for the transcript');
 		assert.equal(result.ok, true, result.spoken);
 		assert.deepEqual(sent.at(-1), { moved: 'General' });
+	});
+});
+
+describe('edit_channel: layout', () => {
+	function withCategory() {
+		const made = makeDeps({ owner: true });
+		const category = { id: 'c1', name: 'Lounge', type: ChannelType.GuildCategory, rawPosition: 0 };
+		made.guild.channels.cache.set('c1', category);
+		return made;
+	}
+
+	it('moves a channel into a category and can make it follow the category permissions', async () => {
+		const { deps, sent } = withCategory();
+		const result = await callTool('edit_channel', { channel: 'General', parent: 'Lounge', sync_permissions: true }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(
+			sent.filter((entry) => entry.parent !== undefined),
+			[{ parent: 'Lounge', lock: true }],
+		);
+		assert.match(result.spoken, /Lounge/);
+	});
+
+	it('takes a channel out of every category when the parent means "none"', async () => {
+		const { deps, sent } = withCategory();
+		const result = await callTool('edit_channel', { channel: 'General', parent: 'none' }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(
+			sent.filter((entry) => entry.parent !== undefined),
+			[{ parent: null, lock: false }],
+		);
+	});
+
+	it('reorders a channel and renames it in the same call', async () => {
+		const { deps, sent } = withCategory();
+		const result = await callTool('edit_channel', { channel: 'General', name: 'afk', position: 99 }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.find((entry) => entry.edited)?.edited?.name, 'afk');
+		assert.equal(sent.find((entry) => entry.position !== undefined)?.position, 99);
+	});
+
+	it('refuses to put a category inside another one, and refuses an unknown category', async () => {
+		const { deps } = withCategory();
+		const nested = await callTool('edit_channel', { channel: 'Lounge', parent: 'Lounge' }, deps);
+		assert.equal(nested.ok, false);
+		assert.match(nested.spoken, /category/i);
+		const missing = await callTool('edit_channel', { channel: 'General', parent: 'Nowhere Land' }, deps);
+		assert.equal(missing.ok, false);
+	});
+
+	it('lists the categories and what is inside them', async () => {
+		const { deps } = withCategory();
+		deps.guild.channels.cache.get('v1').parentId = 'c1';
+		const result = await callTool('list_channels', {}, deps);
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.data.categories, [{ name: 'Lounge', channels: ['General'] }]);
+	});
+});
+
+describe('voice_disconnect', () => {
+	it('disconnects a member from voice without kicking them from the server', async () => {
+		const { deps, sent, guild } = makeDeps({ owner: true });
+		const member = guild.members.cache.get('1');
+		member.voice.setChannel = async (channel) => sent.push({ voiceChannel: channel });
+		const result = await callTool('voice_disconnect', { member: 'Jane' }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { voiceChannel: null });
+		assert.ok(!sent.some((entry) => entry.kick), 'the member is not kicked from the server');
+	});
+
+	it('says so when the member is not in a voice channel, and refuses without the owner', async () => {
+		const { deps, guild } = makeDeps({ owner: true });
+		guild.members.cache.get('1').voice = { channelId: null, channel: null };
+		const idle = await callTool('voice_disconnect', { member: 'Jane' }, deps);
+		assert.equal(idle.ok, false);
+		const outsider = makeDeps();
+		assert.equal((await callTool('voice_disconnect', { member: 'Jane' }, outsider.deps)).denied, true);
 	});
 });
 

@@ -265,6 +265,26 @@ describe('SpeakerAttribution', () => {
 	});
 });
 
+describe('MemoryStore.search', () => {
+	it('finds a note by whole words, across everybody, and ignores a coincidental substring', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'memory-search-'));
+		const store = await new MemoryStore(path.join(dir, 'memory.json')).load();
+		await store.add('1', "the user wants me to laugh when somebody says 'banana'", { name: 'Kaan' });
+		await store.add('2', 'a member of our server', { name: 'Hasan' });
+		await store.add('1', 'favourite song: Rammstein - Puppe', { name: 'Kaan' });
+
+		assert.deepEqual(
+			store.search('favourite song').map((hit) => hit.text),
+			['favourite song: Rammstein - Puppe'],
+		);
+		assert.equal(store.search('banana')[0]?.name, 'Kaan', 'a quoted keyword is still searchable');
+		assert.equal(store.search('erver').length, 0, 'a substring of a word is not a match');
+		assert.equal(store.search('nothing like this at all').length, 0);
+		assert.equal(store.search('').length, 3, 'no query returns the most recent notes');
+		await rm(dir, { recursive: true, force: true });
+	});
+});
+
 describe('SpeakerAttribution: keyword matching', () => {
 	it('matches an inflected form of a stem but not an unrelated word that shares it', () => {
 		let now = 10_000;
