@@ -88,6 +88,10 @@ export default {
 		'**Slash komutları:** /katil /ayril /panel /karakter /gonder /oku /durum /muzik /ozet /kayit /yardim',
 	],
 
+	// The command came from a server the bot is not set up for (it is not in VOICE_TARGETS, or it was
+	// left for good); /join is the way back in.
+	no_guild_session: 'Bu sunucu için ayarlı değilim. Önce `/katil` ile bir sesli kanala çağır.',
+
 	log_registered: 'Slash komutları kaydedildi.',
 	log_register_failed:
 		'Slash komutları kaydedilemedi: {error}. Botu "applications.commands" scope\'u ile yeniden davet etmen gerekir.',
@@ -163,6 +167,9 @@ export default {
 	status_record_on: 'açık',
 	status_record_off: 'kapalı (dökümler yazılmıyor)',
 	status_quota: 'Günlük GPT-Live kotası: {used} / {limit} dk',
+	// Several servers at once: the report above is about this one, these lines are the others.
+	status_sessions_header: '**Sunucular ({count}):**',
+	status_session_line: '• {guild} — {channel} · {brain} · GPT-Live: {live}',
 
 	music_disabled: 'Müzik özelliği kapalı (.env: MUSIC=1).',
 	music_unknown: 'Bilinmeyen müzik komutu.',

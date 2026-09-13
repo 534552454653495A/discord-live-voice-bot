@@ -1,5 +1,6 @@
 // Strings for src/tools/channels.js (en). Referenced as "tools.channels.<key>".
 export default {
+	edit_partial: 'I managed this much: {details}, but the rest failed',
 	category_not_found: 'I could not find a category called "{name}".',
 	not_a_category: '"{name}" is not a category, so I cannot move a channel into it.',
 	category_has_no_parent: '{channel} is a category itself; a category cannot sit inside another one.',

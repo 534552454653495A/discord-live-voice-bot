@@ -35,6 +35,9 @@ export default {
 	record_off: 'Kayıt KAPALI: ses dökümleri ve mesaj metinleri panel günlüğüne yazılmıyor.',
 	memory_on: 'Hafıza açık: {users} kişi, {notes} not.',
 
+	// One server of several could not be brought up; the rest carry on.
+	guild_failed: '{guild} sunucusu hazırlanamadı: {error}',
+	no_guilds: 'Hiçbir sunucu hazırlanamadı: hiçbir yeri dinlemiyorum. GUILD_ID / CHANNEL_ID / VOICE_TARGETS değerlerine bak.',
 	member_index_failed: 'Üye hafızası yüklenemedi: {error}',
 	panel_failed: 'Panel başlatılamadı: {error}',
 	setup_failed: 'Kurulum başarısız: {error}',

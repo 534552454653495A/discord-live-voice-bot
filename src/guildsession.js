@@ -95,6 +95,7 @@ export class GuildSession {
 		cfg,
 		client,
 		guild,
+		channelId = null,
 		store,
 		memory,
 		quota,
@@ -109,17 +110,41 @@ export class GuildSession {
 		log,
 		summarize,
 		presenceEnabled = false,
+		canOpenLive = null,
+		onPermanentLeave = null,
+		joinChannel = null,
 	}) {
 		this.cfg = cfg;
 		this.client = client;
 		this.guild = guild;
+		// The voice channel of THIS guild; cfg.channelId belongs to the primary target only.
+		this.channelId = channelId ?? cfg.channelId ?? null;
 		this.store = store;
 		this.memory = memory;
 		this.quota = quota;
 		this.reader = reader;
 		this.recentActions = recentActions;
-		this.activity = activity;
-		this.record = record;
+		// Which guild an event came from is stamped on HERE, once, instead of at every push() call site:
+		// the panel needs it to tell two servers apart, and a new call site cannot forget it.
+		const guildLabel = guild?.name ?? guild?.id ?? null;
+		const tagGuild = (event) => ({ ...event, meta: { ...(event.meta ?? null), guild: guildLabel } });
+		this.activity = {
+			push: (event) => activity.push(tagGuild(event)),
+			// summarize() reads the shared event buffer through this wrapper.
+			get events() {
+				return activity.events;
+			},
+		};
+		this.record = (event) => record(tagGuild(event));
+		// May this guild open a realtime session right now (MAX_LIVE_SESSIONS)? The registry answers.
+		this.canOpenLive = canOpenLive ?? (() => true);
+		// Told to the registry when the guild is left for good, so the session can be dropped.
+		this.onPermanentLeave = onPermanentLeave;
+		// The join the tools use. Through the registry it can also reach a server that has no session yet
+		// (one is built on the spot); without a registry it is this guild's own join.
+		this.joinChannel = joinChannel;
+		// Why this guild is NOT holding a realtime session, when that is a decision rather than a failure.
+		this.liveBlockedReason = null;
 		this.provider = provider;
 		this.openai = openai;
 		this.localStt = localStt;
@@ -148,17 +173,19 @@ export class GuildSession {
 					duckVolume: cfg.musicDuckVolume,
 					maxMinutes: cfg.musicMaxMinutes,
 					log,
+					// this.activity is the guild-tagged wrapper built above, not the process-wide log.
 					onTrackStart: (track) =>
-						activity.push({
+						this.activity.push({
 							kind: 'music',
 							whoName: track.requestedBy ?? null,
 							text: t('runtime.music_playing', { title: track.title }),
 							meta: { source: track.kind },
 						}),
 					onTrackEnd: (track, { queueEmpty }) => {
-						if (queueEmpty) activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
+						if (queueEmpty) this.activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
 					},
-					onError: (track, message) => activity.push({ kind: 'music', text: t('runtime.music_failed', { title: track.title, error: message }) }),
+					onError: (track, message) =>
+						this.activity.push({ kind: 'music', text: t('runtime.music_failed', { title: track.title, error: message }) }),
 				})
 			: null;
 		this.ducker = new Ducker({ duck: this.music ? this.music.duckRatio : 0.12, holdMs: cfg.musicDuckHoldMs, frameMs: FRAME_MS });
@@ -351,7 +378,7 @@ export class GuildSession {
 			},
 			getUserText: () => (Date.now() - session.recentUserTextAt < 60_000 ? session.recentUserText.trim() : ''),
 			channelLists: () => session.channelLists(),
-			joinVoice: (channel) => session.joinVoice(channel),
+			joinVoice: (channel) => (session.joinChannel ? session.joinChannel(channel) : session.joinVoice(channel)),
 			leaveVoice: (options) => session.leaveVoice(options),
 			currentSpeakerChannel: () => session.guild?.voiceStates.cache.get(session.lastSpeakerId ?? '')?.channel ?? null,
 			currentSpeakerId: () => session.lastSpeakerId,
@@ -791,6 +818,15 @@ export class GuildSession {
 		if (this.shuttingDown || this.live || this.paused) return;
 		if (this.cfg.brainMode === 'local') return; // GPT-Live is never used
 		if (this.quotaBlocked && this.quota.status().exceeded) return;
+		// Cost cap (MAX_LIVE_SESSIONS): the decision belongs here, where the session would open the socket,
+		// so every path into a realtime connection (join, resume, retry, persona rebuild) passes it. A guild
+		// over the cap stays silent — music and tools still work — and gets its turn when a session closes.
+		if (!this.canOpenLive(this)) {
+			if (!this.liveBlockedReason) this.log(t('runtime.live_cap_reached', { guild: this.guild?.name ?? this.guild?.id ?? '?', max: this.cfg.maxLiveSessions }));
+			this.liveBlockedReason = t('runtime.live_cap_reason', { max: this.cfg.maxLiveSessions });
+			return;
+		}
+		this.liveBlockedReason = null;
 		this.quotaBlocked = false;
 		if (this.liveReconnectTimer) {
 			clearTimeout(this.liveReconnectTimer);
@@ -1241,11 +1277,12 @@ export class GuildSession {
 		}
 		if (this.sentCandidateFrames === SPEAKER_STABLE_FRAMES) {
 			this.noteRecentSpeaker(this.sentCandidate);
-			// In a crowded channel the announcement is skipped; onTranscript labels each finished line instead.
+			// `lastAnnouncedUser` means "this is who the model was TOLD about", so it must not be set here
+			// when the announcement is skipped: onTranscript compares against it to decide whether a line
+			// still needs a label, and a silent update would leave a whole conversation unattributed once
+			// the channel quietened down again.
 			if (this.sentCandidate !== this.lastAnnouncedUser && this.recentSpeakerCount() < 3) {
 				void this.announceSpeaker(this.sentCandidate);
-			} else {
-				this.lastAnnouncedUser = this.sentCandidate;
 			}
 		}
 	}
@@ -1367,8 +1404,14 @@ export class GuildSession {
 		this.pauseLive(t('runtime.reason_left_voice'));
 		this.activity.push({ kind: 'session', text: permanent ? t('runtime.left_voice_permanent') : t('runtime.left_voice_temporary') });
 		// If the owner did not throw it out (the model left on its own) it comes back; a permanent exit sets no timer.
-		if (permanent) this.lastVoiceChannelId = null;
-		else if (this.lastVoiceChannelId) this.scheduleRejoin(this.lastVoiceChannelId, REJOIN_DELAYS_MS, t('runtime.rejoin_label_return'));
+		if (permanent) {
+			this.lastVoiceChannelId = null;
+			// The registry decides what a permanent departure means: an extra server is dropped, the primary
+			// target keeps its session (and its timers) exactly as it did before there were several servers.
+			this.onPermanentLeave?.(this);
+		} else if (this.lastVoiceChannelId) {
+			this.scheduleRejoin(this.lastVoiceChannelId, REJOIN_DELAYS_MS, t('runtime.rejoin_label_return'));
+		}
 	}
 
 	/** Somebody moved in or out of the bot's channel (Discord event): drop their audio and tell the model. */
@@ -1461,13 +1504,13 @@ export class GuildSession {
 	 */
 	async start() {
 		const cfg = this.cfg;
-		if (cfg.channelId) {
-			const channel = await this.guild.channels.fetch(cfg.channelId).catch(() => null);
+		if (this.channelId) {
+			const channel = await this.guild.channels.fetch(this.channelId).catch(() => null);
 			if (channel?.isVoiceBased()) {
 				await this.joinVoice(channel);
 				this.log(t('boot.joined_channel', { channel: channel.name }));
 			} else {
-				this.log(t('boot.voice_channel_missing', { channel: cfg.channelId }));
+				this.log(t('boot.voice_channel_missing', { channel: this.channelId }));
 			}
 		}
 
@@ -1511,11 +1554,17 @@ export class GuildSession {
 	/** What /status and the panel read: one snapshot of this guild's session. */
 	status() {
 		return {
+			guildId: this.guild?.id ?? null,
+			guildName: this.guild?.name ?? this.guild?.id ?? null,
 			personaName: this.persona().name,
 			voiceConnected: this.voice.connected,
 			voiceChannelName: this.voice.channelId ? (this.guild?.channels.cache.get(this.voice.channelId)?.name ?? null) : null,
 			brain: this.brain,
 			liveReady: Boolean(this.live?.ready),
+			// Holding a connection (open OR still connecting) is what counts against MAX_LIVE_SESSIONS.
+			liveOpen: Boolean(this.live),
+			// Filled in when the session is deliberately silent (over the cap) rather than failing.
+			liveBlocked: this.liveBlockedReason,
 			localMode: this.localMode,
 			paused: this.paused,
 			latency: this.latency.summary(),

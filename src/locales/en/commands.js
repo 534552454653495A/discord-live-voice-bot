@@ -90,6 +90,10 @@ export default {
 		'**Slash commands:** /join /leave /panel /character /send /read /status /music /summary /recording /help',
 	],
 
+	// The command came from a server the bot is not set up for (it is not in VOICE_TARGETS, or it was
+	// left for good); /join is the way back in.
+	no_guild_session: 'I am not set up for this server. Bring me into a voice channel with `/join` first.',
+
 	log_registered: 'Slash commands registered.',
 	log_register_failed:
 		'Could not register the slash commands: {error}. You need to invite the bot again with the "applications.commands" scope.',
@@ -165,6 +169,9 @@ export default {
 	status_record_on: 'on',
 	status_record_off: 'off (transcripts are not written)',
 	status_quota: 'Daily GPT-Live quota: {used} / {limit} min',
+	// Several servers at once: the report above is about this one, these lines are the others.
+	status_sessions_header: '**Servers ({count}):**',
+	status_session_line: '• {guild} — {channel} · {brain} · GPT-Live: {live}',
 
 	music_disabled: 'The music feature is off (.env: MUSIC=1).',
 	music_unknown: 'Unknown music command.',

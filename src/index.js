@@ -6,8 +6,11 @@
 //   channel <- Opus encode <- 48k stereo <- [bot audio + ducked music] <- playback / music
 //
 // This file keeps the process-wide half only: configuration, the shared services, the Discord client
-// and its events, the panel and the shutdown path. Everything that belongs to ONE server lives in the
-// GuildSession built from cfg.guildId (src/guildsession.js).
+// and its events, the panel and the shutdown path. Everything that belongs to ONE server lives in a
+// GuildSession (src/guildsession.js), and the registry below holds one per server the bot serves
+// (cfg.targets: GUILD_ID/CHANNEL_ID plus VOICE_TARGETS). Every Discord event is handed to the session
+// of the guild it came from, DMs go to the primary one, and a server the bot has no session for is
+// ignored.
 //
 // Slash commands: join, leave, panel, character, send, read, status, music, summary, record, help
 
@@ -59,7 +62,10 @@ const activity = new ActivityLog({ file: path.join(dataDir, 'activity.jsonl'), l
 /** Privacy: while recording is off, personal text (voice transcript, DM, channel message) is counted, not stored. */
 function record(event) {
 	if (!cfg.recordTranscripts && ['voice', 'dm', 'channel'].includes(event.kind) && event.text) {
-		return activity.push({ ...event, text: t('runtime.record_off_placeholder', { count: String(event.text).length }), meta: null, persist: false });
+		// The meta of a redacted event is dropped (it can hold personal text too); which server it came
+		// from is not personal, and the panel needs it to keep the servers apart.
+		const meta = event.meta?.guild ? { guild: event.meta.guild } : null;
+		return activity.push({ ...event, text: t('runtime.record_off_placeholder', { count: String(event.text).length }), meta, persist: false });
 	}
 	return activity.push(event);
 }
@@ -98,42 +104,202 @@ const localServer = cfg.localTtsAutostart
 const localStt = new LocalStt({ url: cfg.localSttUrl, language: cfg.localSttLang, log: (message) => cfg.debug && log(message) });
 
 let client = null;
-let session = null;
 let panel = null;
 let shuttingDown = false;
 
+// ---------------------------------------------------------------- session registry
+
+// One GuildSession per server the bot serves, keyed by guild id. Everything that belongs to a server
+// (conversation, model session, audio path, music, speaker attribution) lives inside its own session,
+// so the registry is the only place that knows there is more than one.
+const sessions = new Map();
+
+/** The session of one guild, or null when the bot is not set up for that server. */
+function sessionFor(guildId) {
+	return (guildId ? sessions.get(String(guildId)) : null) ?? null;
+}
+
+/** How many guilds hold a realtime connection right now — what MAX_LIVE_SESSIONS counts. */
+function liveSessionCount(except = null) {
+	let count = 0;
+	for (const session of sessions.values()) {
+		if (session !== except && session.live) count++;
+	}
+	return count;
+}
+
+/**
+ * Builds one guild's session and brings it up: used for every cfg.targets entry at boot, and on demand
+ * when /join or the join_voice tool names a channel in a server that has no session yet.
+ */
+async function ensureSession(guildId, channelId = null) {
+	const existing = sessionFor(guildId);
+	if (existing) return existing;
+	const guild = await client.guilds.fetch(String(guildId));
+	const session = new GuildSession({
+		cfg,
+		client,
+		guild,
+		channelId,
+		store,
+		memory,
+		quota,
+		reader,
+		recentActions,
+		activity,
+		record,
+		provider,
+		openai,
+		localStt,
+		localServer,
+		log,
+		summarize: summarizeConversation,
+		presenceEnabled: usePresence,
+		// The cost cap lives in the registry because only it can see the other guilds.
+		canOpenLive: (asking) => liveSessionCount(asking) < cfg.maxLiveSessions,
+		onPermanentLeave: (left) => dropSession(left),
+		joinChannel: (channel) => joinChannel(channel),
+	});
+	// Stored before start(): joining the channel already produces voice events, and those have to find
+	// their session in here.
+	sessions.set(guild.id, session);
+	try {
+		await session.start();
+	} catch (err) {
+		sessions.delete(guild.id);
+		session.stop();
+		throw err;
+	}
+	return session;
+}
+
+/** The primary target's session (cfg.guildId), or the first one there is; null when there are none. */
+function primarySession() {
+	return sessions.get(cfg.guildId) ?? sessions.values().next().value ?? null;
+}
+
+/**
+ * A permanent leave: an extra server is forgotten (its timers, audio and model session go with it),
+ * while the primary target keeps its session exactly as it did before there were several servers.
+ */
+function dropSession(session) {
+	const guildId = session.guild?.id ?? null;
+	if (!guildId || guildId === cfg.guildId || sessions.get(guildId) !== session) return;
+	sessions.delete(guildId);
+	log(t('runtime.session_dropped', { guild: session.guild?.name ?? guildId }));
+	session.stop();
+	void session.dispose().catch(() => {});
+}
+
+/** Snapshot of every session; `first` (usually the guild being asked about) is put in front. */
+function sessionSnapshots(first = null) {
+	const ordered = [...sessions.values()];
+	const index = first ? ordered.indexOf(first) : -1;
+	if (index > 0) {
+		ordered.splice(index, 1);
+		ordered.unshift(first);
+	}
+	return ordered.map((session) => session.status());
+}
+
+// What the panel reads while no server has come up (every guild failed, or it is being built): the
+// shape of GuildSession.status() with nothing in it, so /healthz and the panel still answer.
+const EMPTY_STATUS = {
+	guildId: null,
+	guildName: null,
+	personaName: null,
+	voiceConnected: false,
+	voiceChannelName: null,
+	brain: 'live',
+	liveReady: false,
+	liveOpen: false,
+	liveBlocked: null,
+	localMode: false,
+	paused: false,
+	latency: { count: 0, responseP50: null, responseP90: null, delegationP50: null, toolP50: null, text: '' },
+	memberIndexSize: 0,
+	music: null,
+};
+
+/** One server on the panel's status line: its name, the voice channel it sits in and its brain. */
+function describeSessionForPanel(entry) {
+	return (
+		t('runtime.panel_status_guild', {
+			guild: entry.guildName ?? '?',
+			channel: entry.voiceConnected ? `#${entry.voiceChannelName ?? '?'}` : t('runtime.panel_off'),
+			brain: entry.brain === 'local' ? t('runtime.panel_local') : 'GPT-Live',
+		}) + (entry.liveBlocked ? t('runtime.panel_status_guild_silent', { reason: entry.liveBlocked }) : '')
+	);
+}
+
+/** A display name for a user id: the servers are asked in turn, since a speaker can be in any of them. */
+function nameForUser(userId) {
+	if (!userId) return null;
+	const fallback = `id:${userId}`;
+	for (const session of sessions.values()) {
+		const name = session.nameFor(userId);
+		if (name && name !== fallback) return name;
+	}
+	return fallback;
+}
+
+/**
+ * Every join goes through here: /join, the join_voice tool and a rejoin after a permanent leave. A
+ * channel in a server with no session gets that session built around it (start() does the join), so a
+ * new server can be picked up without a restart.
+ */
+async function joinChannel(channel) {
+	const guildId = channel?.guildId ?? channel?.guild?.id ?? null;
+	const existing = sessionFor(guildId);
+	if (existing) return existing.joinVoice(channel);
+	if (guildId) {
+		await ensureSession(guildId, channel.id);
+		return undefined;
+	}
+	return primarySession()?.joinVoice(channel);
+}
+
 // ---------------------------------------------------------------- command context
 
-// What the slash commands and the panel work on is one server's session; with several guilds this is
-// the session of the guild the interaction came from.
-const ctx = {
-	store,
-	config: cfg,
-	log,
-	quota,
-	memory,
-	get voice() {
-		return session.voice;
-	},
-	get latency() {
-		return session.latency;
-	},
-	get music() {
-		return session.music;
-	},
-	localMode: () => session.localMode,
-	brain: () => session.brain,
-	chatterbox: () => localServer?.status ?? null,
-	getLive: () => session.live,
-	refreshPersona: (reason) => session.refreshPersona(reason),
-	say: (text) => session.say(text),
-	applySetting: (name, value) => session.applySetting(name, value),
-	summarize: (options) => session.deps().summarize(options),
-	activity: (event) => activity.push(event),
-	callTool: (name, args) => callTool(name, args, session.deps()),
-	joinVoice: (channel) => session.joinVoice(channel),
-	leaveVoice: (options) => session.leaveVoice(options),
-};
+/**
+ * What a slash command or a panel interaction works on is ONE server's session: the context is built
+ * per interaction from the guild it came from, so a command given in server A cannot reach server B.
+ * `session` is null when the bot has no session for that guild — then only /join works, and it builds one.
+ */
+function buildContext(session) {
+	return {
+		store,
+		config: cfg,
+		log,
+		quota,
+		memory,
+		hasSession: () => Boolean(session),
+		get voice() {
+			return session?.voice ?? null;
+		},
+		get latency() {
+			return session?.latency ?? null;
+		},
+		get music() {
+			return session?.music ?? null;
+		},
+		localMode: () => session?.localMode ?? false,
+		brain: () => session?.brain ?? 'live',
+		chatterbox: () => localServer?.status ?? null,
+		getLive: () => session?.live ?? null,
+		refreshPersona: (reason) => session?.refreshPersona(reason),
+		say: (text) => session?.say(text),
+		applySetting: (name, value) => session?.applySetting(name, value),
+		summarize: (options) => session?.deps().summarize(options),
+		// Events from an interaction are tagged with the guild they belong to, like the session's own.
+		activity: (event) => (session ? session.activity.push(event) : activity.push(event)),
+		callTool: (name, args) => callTool(name, args, session.deps()),
+		joinVoice: (channel) => joinChannel(channel),
+		leaveVoice: (options) => session?.leaveVoice(options),
+		// /status reports every server, this one first.
+		sessions: () => sessionSnapshots(session),
+	};
+}
 
 // ---------------------------------------------------------------- lifecycle
 
@@ -141,14 +307,18 @@ async function shutdown(code = 0) {
 	if (shuttingDown) return;
 	shuttingDown = true;
 	log(t('runtime.shutting_down'));
-	session?.stop();
+	// Silence every server first (timers, audio), then tear the sessions down one by one.
+	for (const session of sessions.values()) session.stop();
 	try {
 		localServer?.stop();
 	} catch {
 		/* ignore */
 	}
 	await panel?.close().catch(() => {});
-	await session?.dispose();
+	for (const session of sessions.values()) {
+		await session.dispose().catch(() => {});
+	}
+	sessions.clear();
 	try {
 		client?.destroy();
 	} catch {
@@ -212,20 +382,29 @@ client = new Client({ intents, partials: [Partials.Channel] });
 client.on(Events.Error, (err) => log(t('runtime.discord_error', { error: err.message })));
 
 client.on(Events.InteractionCreate, (interaction) => {
-	if (interaction.guildId && interaction.guildId !== cfg.guildId) return; // only the configured server
-	handleInteraction(interaction, ctx).catch((err) => log(t('runtime.interaction_error', { error: err.message })));
+	// The session of the guild the interaction came from; a guild with no session still gets /join (which
+	// builds one) and a plain "not set up for this server" answer for everything else. A DM interaction
+	// has no guild, so it works on the primary target.
+	const session = interaction.guildId ? sessionFor(interaction.guildId) : primarySession();
+	handleInteraction(interaction, buildContext(session)).catch((err) => log(t('runtime.interaction_error', { error: err.message })));
 });
 
 client.on(Events.MessageCreate, (message) => {
 	const isDm = !message.guild;
-	// Only the configured server and DMs; the other servers the bot is in do not reach the log.
-	if (!isDm && message.guild.id !== cfg.guildId) return;
+	const session = isDm ? null : sessionFor(message.guild.id);
+	// A server the bot has no session for does not reach the log, exactly as a foreign server did before.
+	if (!isDm && !session) return;
+	// A DM belongs to no server: it is answered through the primary session's live connection if there is
+	// one, and keeps working when there is no session at all.
+	const voiceSession = session ?? primarySession();
+	// Guild events are tagged with their server; a DM has none to tag.
+	const push = session ? (event) => session.record(event) : record;
 	if (message.member) session?.rememberMember(message.member);
 	const where = isDm ? null : { channel: `#${message.channel?.name ?? '?'}` };
 	if (!message.author?.bot) {
 		const text = String(message.content ?? '').trim() || (message.attachments?.size ? t('runtime.image_placeholder') : '');
 		if (text) {
-			record({
+			push({
 				kind: isDm ? 'dm' : 'channel',
 				direction: 'in',
 				who: message.author?.id ?? null,
@@ -241,22 +420,25 @@ client.on(Events.MessageCreate, (message) => {
 		provider,
 		visionClient: openai,
 		cfg,
+		// Which server this message may be answered in: the one it came from (it has a session), not the
+		// primary target, so a mention in the second server is not dropped.
+		guildId: session?.guild?.id ?? cfg.guildId,
 		log,
 		memory,
 		replyLimiter,
-		activity: (event) => activity.push(event),
+		activity: (event) => (session ? session.activity.push(event) : activity.push(event)),
 		persona: () => {
 			const active = store.getActive();
 			return { name: active?.name ?? null, prompt: active?.prompt?.trim() || cfg.instructions };
 		},
-		getLive: () => session?.live ?? null,
+		getLive: () => voiceSession?.live ?? null,
 	})
 		.then((reply) => {
 			if (!reply) return;
-			record({
+			push({
 				kind: isDm ? 'dm' : 'channel',
 				direction: 'out',
-				whoName: session?.persona().name ?? 'bot',
+				whoName: voiceSession?.persona().name ?? 'bot',
 				text: reply,
 				meta: where,
 			});
@@ -264,47 +446,37 @@ client.on(Events.MessageCreate, (message) => {
 		.catch((err) => log(t('runtime.message_error', { error: err.message })));
 });
 
+// Member and voice events are handed to the session of the server they happened in; a server without
+// one is ignored.
 client.on(Events.GuildMemberRemove, (member) => {
-	if (member.guild?.id !== cfg.guildId) return;
-	session?.forgetMember(member.id);
+	sessionFor(member.guild?.id)?.forgetMember(member.id);
 });
 client.on(Events.GuildMemberUpdate, (_old, member) => {
-	if (member.guild?.id !== cfg.guildId) return;
-	session?.rememberMember(member, { stale: true });
+	sessionFor(member.guild?.id)?.rememberMember(member, { stale: true });
 });
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-	session?.onVoiceStateUpdate(oldState, newState);
+	sessionFor(newState?.guild?.id ?? oldState?.guild?.id)?.onVoiceStateUpdate(oldState, newState);
 });
 
 client.once(Events.ClientReady, async () => {
 	try {
-		const guild = await client.guilds.fetch(cfg.guildId);
-		session = new GuildSession({
-			cfg,
-			client,
-			guild,
-			store,
-			memory,
-			quota,
-			reader,
-			recentActions,
-			activity,
-			record,
-			provider,
-			openai,
-			localStt,
-			localServer,
-			log,
-			summarize: summarizeConversation,
-			presenceEnabled: usePresence,
-		});
 		if (cfg.panelEnabled) {
 			const past = await activity.load(500);
 			if (past) log(t('boot.panel_history', { count: past }));
 		}
-		await registerCommands(client, cfg.guildId, log);
-
-		await session.start();
+		// Every configured server, in order, with the primary target first. One server failing (the bot is
+		// not a member, the channel is gone) must not keep the others from coming up, so it is logged and
+		// the loop carries on.
+		for (const target of cfg.targets) {
+			try {
+				await registerCommands(client, target.guildId, log);
+				await ensureSession(target.guildId, target.channelId);
+			} catch (err) {
+				log(t('boot.guild_failed', { guild: target.guildId, error: err.message }));
+			}
+		}
+		if (!sessions.size) log(t('boot.no_guilds'));
+		const primary = primarySession();
 
 		log(
 			t('boot.intents', {
@@ -317,10 +489,10 @@ client.once(Events.ClientReady, async () => {
 		log(cfg.useResponsesDelegation ? t('boot.tools_backend', { model: cfg.researchModel, count: toolDefinitions().length }) : t('boot.tools_client'));
 		if (cfg.ownerPriority && cfg.ownerId) log(t('boot.owner_priority', { owner: cfg.ownerId }));
 		if (!cfg.ownerId) log(t('boot.no_owner_id'));
-		if (session.music) {
+		if (primary?.music) {
 			log(
 				t('boot.music_on', {
-					volume: Math.round(session.music.volume * 100),
+					volume: Math.round(primary.music.volume * 100),
 					duck: Math.round(cfg.musicDuckVolume * 100),
 					folder: cfg.musicDir ? t('boot.music_folder', { dir: cfg.musicDir }) : '',
 				}),
@@ -345,21 +517,28 @@ client.once(Events.ClientReady, async () => {
 					activity,
 					port: cfg.panelPort,
 					log,
-					nameFor: (userId) => session.nameFor(userId),
+					// Who is speaking can be someone in any of the servers, so every session gets asked.
+					nameFor: (userId) => nameForUser(userId),
 					state: () => {
-						const snapshot = session.status();
+						const snapshots = sessionSnapshots(primarySession());
+						const snapshot = snapshots[0] ?? EMPTY_STATUS;
 						const stats = snapshot.latency;
 						const counts = activity.stats();
 						const quotaStatus = quota.status();
 						return {
 							title: t('runtime.panel_title', { name: snapshot.personaName ?? t('runtime.panel_default_name') }),
 							status:
-								t('runtime.panel_status_voice', {
-									channel: snapshot.voiceConnected ? `#${snapshot.voiceChannelName ?? '?'}` : t('runtime.panel_off'),
-								}) +
-								t('runtime.panel_status_brain', { brain: snapshot.brain === 'local' ? t('runtime.panel_local') : 'GPT-Live' }) +
+								// One server keeps the line it always had; with several, each of them is named with its
+								// own channel and brain so the panel can be read at a glance.
+								(snapshots.length > 1
+									? snapshots.map((entry) => describeSessionForPanel(entry)).join(' | ')
+									: t('runtime.panel_status_voice', {
+											channel: snapshot.voiceConnected ? `#${snapshot.voiceChannelName ?? '?'}` : t('runtime.panel_off'),
+										}) + t('runtime.panel_status_brain', { brain: snapshot.brain === 'local' ? t('runtime.panel_local') : 'GPT-Live' })) +
 								(localServer ? t('runtime.panel_status_chatterbox', { status: localServer.status }) : '') +
-								t('runtime.panel_status_live', { state: snapshot.liveReady ? t('runtime.panel_on') : t('runtime.panel_off') }) +
+								t('runtime.panel_status_live', {
+									state: snapshots.some((entry) => entry.liveReady) ? t('runtime.panel_on') : t('runtime.panel_off'),
+								}) +
 								t('runtime.panel_status_record', { state: cfg.recordTranscripts ? t('runtime.panel_on') : t('runtime.panel_off') }) +
 								t('runtime.panel_status_events', { count: counts.total ?? 0 }),
 							metrics: [
@@ -373,6 +552,13 @@ client.once(Events.ClientReady, async () => {
 									value: stats.responseP50 === null ? '—' : t('runtime.seconds_value', { seconds: (stats.responseP50 / 1000).toFixed(1) }),
 								},
 								{ label: t('runtime.panel_metric_voice_source'), value: snapshot.localMode ? t('runtime.panel_local') : 'GPT-Live' },
+								{
+									label: t('runtime.panel_metric_sessions'),
+									value: t('runtime.panel_metric_sessions_value', {
+										count: snapshots.length,
+										live: snapshots.filter((entry) => entry.liveOpen).length,
+									}),
+								},
 								{ label: t('runtime.panel_metric_member_index'), value: snapshot.memberIndexSize },
 								{ label: t('runtime.panel_metric_memory_notes'), value: memory?.stats().notes ?? 0 },
 								{
@@ -382,13 +568,17 @@ client.once(Events.ClientReady, async () => {
 										: t('runtime.minutes_value', { used: Math.round(quotaStatus.used / 60) }),
 								},
 							],
-							music: snapshot.music
-								? t('runtime.panel_music', { now: snapshot.music.text, volume: Math.round(snapshot.music.volume * 100) })
-								: '',
+							// With one server this is the line it always was; with several, every server that is
+							// playing something gets its own.
+							music: snapshots
+								.filter((entry) => entry.music)
+								.map((entry) => t('runtime.panel_music', { now: entry.music.text, volume: Math.round(entry.music.volume * 100) }))
+								.join(' · '),
 						};
 					},
 					metrics: () => {
-						const snapshot = session.status();
+						const snapshots = sessionSnapshots(primarySession());
+						const snapshot = snapshots[0] ?? EMPTY_STATUS;
 						const stats = snapshot.latency;
 						const counts = activity.stats();
 						const quotaStatus = quota.status();
@@ -413,10 +603,13 @@ client.once(Events.ClientReady, async () => {
 							music_queue: snapshot.music?.queue ?? 0,
 							member_index_size: snapshot.memberIndexSize,
 							memory_notes: memory?.stats().notes ?? 0,
+							// Every metric name above keeps describing the primary target; these two are the whole fleet.
+							sessions_total: snapshots.length,
+							sessions_live: snapshots.filter((entry) => entry.liveOpen).length,
 						};
 					},
 					health: () => {
-						const snapshot = session.status();
+						const snapshot = primarySession()?.status() ?? EMPTY_STATUS;
 						return {
 							ok: Boolean(client?.isReady?.()),
 							discord: Boolean(client?.isReady?.()),

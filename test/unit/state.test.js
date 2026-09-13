@@ -59,6 +59,24 @@ describe('config.js', () => {
 		assert.equal(cfg.dailyLiveSeconds, 3600);
 		assert.equal(cfg.recordTranscripts, false);
 	});
+	it('VOICE_TARGETS: the primary pair comes first, duplicates and malformed entries are dropped', () => {
+		assert.deepEqual(loadConfig(baseEnv).targets, [{ guildId: 'g', channelId: 'c' }], 'with none given there is exactly one target');
+		const cfg = loadConfig({ ...baseEnv, VOICE_TARGETS: 'g2:c2, g:other, nonsense, g3:, :c4, g4:c4 ,, g2:c9' });
+		assert.deepEqual(cfg.targets, [
+			{ guildId: 'g', channelId: 'c' },
+			{ guildId: 'g2', channelId: 'c2' },
+			{ guildId: 'g4', channelId: 'c4' },
+		]);
+		assert.equal(cfg.guildId, 'g', 'GUILD_ID / CHANNEL_ID keep meaning the primary server');
+		assert.equal(cfg.channelId, 'c');
+	});
+	it('MAX_LIVE_SESSIONS: defaults to 2, never drops below 1 and stays a whole number', () => {
+		assert.equal(loadConfig(baseEnv).maxLiveSessions, 2);
+		assert.equal(loadConfig({ ...baseEnv, MAX_LIVE_SESSIONS: '0' }).maxLiveSessions, 1);
+		assert.equal(loadConfig({ ...baseEnv, MAX_LIVE_SESSIONS: '4' }).maxLiveSessions, 4);
+		assert.equal(loadConfig({ ...baseEnv, MAX_LIVE_SESSIONS: '2.7' }).maxLiveSessions, 2);
+		assert.equal(loadConfig({ ...baseEnv, MAX_LIVE_SESSIONS: 'abc' }).maxLiveSessions, 2);
+	});
 	it('understands the Turkish spelling of "off" under the Turkish locale', () => {
 		setLocale('tr');
 		try {

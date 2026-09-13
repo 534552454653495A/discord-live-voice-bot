@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-09-13
+
+### Added
+
+- **Several servers at once.** `GUILD_ID` and `CHANNEL_ID` remain the primary server; `VOICE_TARGETS`
+  adds more as a comma-separated list of `guildId:channelId` pairs. Each server gets its own
+  conversation, model session, audio path, music queue and speaker attribution, so a command spoken in
+  one server cannot authorise anything in another. `/join` in a server that is not listed builds a
+  session for it on the spot, and a permanent `leave` drops an extra server's session while the primary
+  one behaves exactly as before.
+- `MAX_LIVE_SESSIONS` (default 2) caps how many servers may hold an open realtime session at the same
+  time, because cost scales with that number. The check sits where the socket is opened, so every path
+  into a connection passes it; a server over the cap stays quiet, keeps its tools and music, and takes
+  its turn when a session closes. `/status` and the panel say which server is silent and why.
+- `/status` and the panel list every session, activity events carry the server they came from, and
+  `/metrics` gains `sessions_total` and `sessions_live`.
+
+### Fixed
+
+- The speaker announcement bookkeeping marked a speaker as "already told to the model" even when the
+  announcement had been skipped for a crowded channel. Once the other speakers fell out of the twenty
+  second window the line labelling stopped as well, and the assistant carried on a whole conversation
+  without knowing who it was talking to.
+- Memory search dropped every query shorter than three letters, which in Turkish removes ordinary words
+  such as "ev" and "su", and it could not match a keyword that sat at the very end of a note.
+- A channel edit is three separate API calls. When one of them failed after another had succeeded the
+  tool reported a flat failure, sending the speaker to look for a change that had in fact been made; it
+  now says what went through and what did not.
+
 ## [1.4.0] — 2026-09-13
 
 ### Added

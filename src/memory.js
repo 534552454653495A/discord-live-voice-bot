@@ -97,7 +97,9 @@ export class MemoryStore {
 	 */
 	search(query = '', { limit = 12 } = {}) {
 		const needle = normalize(String(query ?? '').replace(/['’"“”]/gu, ' '));
-		const words = needle.split(' ').filter((word) => word.length >= 3);
+		// Two-letter words are ordinary words in Turkish ("ev", "su"), so they are kept: the length limit
+		// below applies to PREFIX matching only, not to matching a whole word.
+		const words = needle.split(' ').filter(Boolean);
 		const hits = [];
 		for (const [id, user] of Object.entries(this.data.users)) {
 			for (const note of user.notes ?? []) {
@@ -107,7 +109,9 @@ export class MemoryStore {
 				// Whole words, not raw substrings: searching for "muz" must not match "sunucumuzda".
 				const tokens = haystack.split(' ').filter(Boolean);
 				const matches = (word) => tokens.some((token) => token === word || (word.length >= 4 && token.startsWith(word)));
-				const score = !needle ? 0 : words.filter(matches).length + (haystack.includes(` ${needle} `) || haystack.startsWith(`${needle} `) ? 2 : 0);
+				// The phrase bonus compares against the padded haystack so a match at the very end counts too.
+				const padded = ` ${tokens.join(' ')} `;
+				const score = !needle ? 0 : words.filter(matches).length + (padded.includes(` ${needle} `) ? 2 : 0);
 				if (needle && score === 0) continue;
 				hits.push({ id, name: user.name ?? null, text: note.text, at: note.at ?? 0, score });
 			}

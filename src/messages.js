@@ -201,7 +201,9 @@ export async function createReplyText(deps, { instructions, input, withImages = 
  */
 export async function handleMessage(message, deps) {
 	const { log } = deps;
-	if (!shouldReply(message, { botId: deps.client?.user?.id ?? null, guildId: deps.cfg.guildId })) return null;
+	// deps.guildId is the server this message may be answered in: with several servers it is the one the
+	// message came from, so a mention outside the primary target is not dropped.
+	if (!shouldReply(message, { botId: deps.client?.user?.id ?? null, guildId: deps.guildId ?? deps.cfg.guildId })) return null;
 
 	const isDm = !message.guild;
 	if (isDm && !deps.cfg.respondToDms) return null;

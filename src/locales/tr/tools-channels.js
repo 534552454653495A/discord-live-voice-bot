@@ -1,5 +1,6 @@
 // Strings for src/tools/channels.js (tr). Referenced as "tools.channels.<key>".
 export default {
+	edit_partial: 'Şu kadarını yaptım: {details}, gerisi olmadı',
 	category_not_found: '"{name}" diye bir kategori bulamadım.',
 	not_a_category: '"{name}" bir kategori değil, kanalı onun içine taşıyamam.',
 	category_has_no_parent: '{channel} zaten bir kategori; kategori başka bir kategorinin içine girmez.',

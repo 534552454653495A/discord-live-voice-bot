@@ -27,14 +27,16 @@ destructive action is locked behind a voice-based owner gate that proves *who ac
 - **Offline fallback ("local brain").** If the realtime API is out of credit or unreachable, the bot can
   keep talking using local Whisper for ears, any chat model for the brain, and Chatterbox for the voice.
 - **Local admin panel** on `127.0.0.1:8787` with a live activity log, `/healthz` and Prometheus `/metrics`.
+- **Several servers at once.** Each one gets its own conversation, model session, audio path and music,
+  and the owner gate is per server.
 - **English and Turkish.** Every user-visible string lives in `src/locales/`; `BOT_LANGUAGE` picks one.
 
 ## What it is not
 
-It is a single-server bot: one guild, one voice channel at a time. Nothing is transcribed to disk unless
-you allow it (`RECORD_TRANSCRIPTS=0` keeps transcripts and message text out of the log file, and they are
-only counted). There is no service of ours in the middle either: the bot runs on your machine and talks to
-the model APIs directly with your own keys.
+It is one process, not a hosted service: the bot runs on your machine and talks to the model APIs directly
+with your own keys, and nothing is transcribed to disk unless you allow it (`RECORD_TRANSCRIPTS=0` keeps
+transcripts and message text out of the log file and only counts the events). Serving several servers costs
+one realtime session per server, which is what `MAX_LIVE_SESSIONS` is there to bound.
 
 ---
 
@@ -146,6 +148,22 @@ answer. That is where the rest of the surface lives:
 | *(owner)* "ban him", "give Ali the chill role", "lock the channel", "only the chill role can join this room" | Admin tools, owner voice only |
 | *(owner)* "move this channel under Lounge", "put it at the bottom", "throw him out of voice" | Channel layout and voice moderation |
 
+## Several servers at once
+
+`GUILD_ID` and `CHANNEL_ID` are the primary server. Add more with `VOICE_TARGETS`:
+
+```
+VOICE_TARGETS=987654321098765432:111222333444555666,876543210987654321:222333444555666777
+```
+
+Every server gets its own conversation, model session, audio path, music queue and speaker attribution, so
+a command spoken in one cannot authorise anything in another. `/join` in a server that is not listed builds
+a session for it without a restart.
+
+Each open conversation is a separate realtime session, so cost grows with the number of them.
+`MAX_LIVE_SESSIONS` (default 2) bounds how many may be connected at once. A server over the cap still runs
+its tools and plays music, it just stays quiet until a slot frees up, and `/status` and the panel say so.
+
 ### Slash commands
 
 `/join` `/leave` `/panel` `/character` `/send` `/read` `/status` `/music` `/summary` `/recording` `/help`
@@ -194,6 +212,8 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | Variable | Default | What it controls |
 | --- | --- | --- |
 | `BOT_LANGUAGE` | `en` | Language of logs, speech, panel and voice-command matching (`en`, `tr`) |
+| `VOICE_TARGETS` | *(empty)* | Extra servers, as `guildId:channelId` pairs separated by commas |
+| `MAX_LIVE_SESSIONS` | `2` | How many servers may hold an open realtime session at once |
 | `OWNER_ID` | *(empty)* | The only voice that may use admin tools; empty disables them |
 | `OWNER_PRIORITY` | `1` | While the owner speaks, only their audio is sent to the model |
 | `RESEARCH_MODEL` | *(empty)* | Enables the full tool set and web search through the Responses API |
@@ -206,7 +226,7 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 
 ```
 src/
-  index.js        configuration, shared services, Discord event routing
+  index.js        configuration, shared services, the session registry, event routing
   guildsession.js everything that belongs to one server: audio, session, tools
   live.js         GPT-Live WebSocket session and tool dispatch
   audio.js        mixing, resampling, ring buffers

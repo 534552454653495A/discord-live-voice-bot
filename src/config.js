@@ -45,6 +45,29 @@ function list(value) {
 		.filter(Boolean);
 }
 
+/**
+ * The servers the bot sits in. GUILD_ID/CHANNEL_ID is the PRIMARY pair and always comes first;
+ * VOICE_TARGETS adds more servers as a comma-separated list of "guildId:channelId" pairs.
+ *
+ * A guild that appears twice keeps its FIRST channel (one voice channel per server), and an entry
+ * that is not a "guild:channel" pair is skipped. Nothing is logged from here: config.js either throws
+ * in the "missing variable" style (a whole unusable configuration) or stays quiet, and one mistyped
+ * extra target must not keep the primary server from booting.
+ */
+function voiceTargets(value, primary) {
+	const targets = [primary];
+	const seen = new Set([primary.guildId]);
+	for (const entry of list(value)) {
+		const parts = entry.split(':').map((part) => part.trim());
+		if (parts.length !== 2 || !parts[0] || !parts[1]) continue;
+		const [guildId, channelId] = parts;
+		if (seen.has(guildId)) continue;
+		seen.add(guildId);
+		targets.push({ guildId, channelId });
+	}
+	return targets;
+}
+
 // Empty/off/none -> the field is not sent at all; undefined -> the default.
 function effortValue(value, fallback) {
 	if (value === undefined || value === null) return fallback;
@@ -75,6 +98,12 @@ export function loadConfig(env = process.env) {
 		discordToken: str(env.DISCORD_TOKEN),
 		guildId: str(env.GUILD_ID),
 		channelId: str(env.CHANNEL_ID),
+		// Every server the bot serves, the primary pair first (see voiceTargets above).
+		targets: voiceTargets(env.VOICE_TARGETS, { guildId: str(env.GUILD_ID), channelId: str(env.CHANNEL_ID) }),
+		// Cost cap: how many guilds may hold an OPEN realtime session at the same time. The bill grows
+		// linearly with this number, so extra servers stay silent (music and tools still work) instead of
+		// quietly multiplying the cost.
+		maxLiveSessions: Math.floor(num(env.MAX_LIVE_SESSIONS, 2, { min: 1 })),
 		openaiApiKey: str(env.OPENAI_API_KEY),
 
 		// UI/voice language of the assistant: locale code from src/locales (default "en"; "tr" available).

@@ -198,6 +198,12 @@ export const tools = [
 					data: { id: channel.id, changes: patch, parent: parentArg ? (parentArg.parent?.name ?? null) : undefined, position, synced: sync },
 				};
 			} catch (err) {
+				// Renaming, moving and reordering are separate API calls, so an error can arrive with some of
+				// them already applied. Saying only "it failed" would send the speaker looking for a change
+				// that did happen, so what went through is reported alongside the failure.
+				if (done.length) {
+					return failure(deps, 'channel edit partly failed', err, t('tools.channels.edit_partial', { details: done.join(', ') }));
+				}
 				return failure(deps, 'channel edit failed', err, t('tools.channels.edit_failed'));
 			}
 		},

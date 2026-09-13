@@ -243,6 +243,10 @@ export function panelView(store) {
 
 export async function handleInteraction(interaction, ctx) {
 	if (interaction.isAutocomplete()) return handleAutocomplete(interaction, ctx);
+	// A server the bot has no session for: /join builds one, everything else has nothing to act on.
+	if (ctx.hasSession?.() === false && !(interaction.isChatInputCommand() && interaction.commandName === 'join')) {
+		return interaction.reply({ content: t('commands.no_guild_session'), flags: MessageFlags.Ephemeral }).catch(() => {});
+	}
 	if (interaction.isChatInputCommand()) return guarded(interaction, ctx, handleCommand);
 	if (interaction.isStringSelectMenu() && interaction.customId === 'char:select') return guarded(interaction, ctx, handleSelect);
 	if (interaction.isButton()) return guarded(interaction, ctx, handleButton);
@@ -392,6 +396,22 @@ async function handleCommand(interaction, ctx) {
 				lines.push(t('commands.status_quota', { used: Math.round(quota.used / 60), limit: Math.round(quota.limit / 60) }));
 			}
 			if (stats?.count) lines.push(stats.text);
+			// The lines above are about the server the command was given in; when the bot serves more than
+			// one, the others are listed underneath (a single server reports exactly what it always did).
+			const others = (ctx.sessions?.() ?? []).slice(1);
+			if (others.length) {
+				lines.push(t('commands.status_sessions_header', { count: others.length + 1 }));
+				for (const entry of others) {
+					lines.push(
+						t('commands.status_session_line', {
+							guild: entry.guildName ?? '?',
+							channel: entry.voiceConnected ? `#${entry.voiceChannelName ?? '?'}` : t('commands.status_voice_none'),
+							brain: entry.brain === 'local' ? t('commands.status_brain_local') : 'GPT-Live',
+							live: entry.liveReady ? t('commands.status_open') : (entry.liveBlocked ?? t('commands.status_closed')),
+						}),
+					);
+				}
+			}
 			await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
 			return;
 		}

@@ -35,6 +35,9 @@ export default {
 	record_off: 'Recording is OFF: voice transcripts and message texts are not written to the panel log.',
 	memory_on: 'Memory on: {users} people, {notes} notes.',
 
+	// One server of several could not be brought up; the rest carry on.
+	guild_failed: 'Server {guild} could not be set up: {error}',
+	no_guilds: 'No server could be set up: nothing is being listened to. Check GUILD_ID / CHANNEL_ID / VOICE_TARGETS.',
 	member_index_failed: 'The member index could not be loaded: {error}',
 	panel_failed: 'The panel could not be started: {error}',
 	setup_failed: 'Setup failed: {error}',
