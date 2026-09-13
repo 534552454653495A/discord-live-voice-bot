@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] — 2026-09-14
+
+### Fixed
+
+- **Running out of API credit left the bot pretending to work.** The wall arrived as a plain
+  `invalid_request_error` whose only clue was the sentence "You have no credits remaining", so it was not
+  classified as permanent: the socket stayed open, every request on it failed, and the assistant kept
+  saying it had sent the message. A billing failure is now recognised by its wording as well as its code,
+  and a session that fails three times in a minute is closed and retried, which is also what hands the
+  conversation to the local brain.
+
 ## [1.6.0] — 2026-09-14
 
 ### Added

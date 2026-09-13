@@ -3,6 +3,8 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	live_unusable: '[live] the session keeps failing ({message}); closing it and starting again',
+	reason_live_unusable: 'the session was no longer usable',
 	silenced_on: '[voice] the owner told me to be quiet; I will not speak until they say otherwise',
 	silenced_off: '[voice] the owner let me speak again',
 	silenced_note_on: 'The owner has told you to be quiet. Do not speak, whatever anybody else asks: the application drops your audio anyway. Keep listening and keep doing what you are asked with your tools. Only the owner can lift this, by saying so themselves.',

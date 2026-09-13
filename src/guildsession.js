@@ -62,7 +62,10 @@ const TURN_MEMORY = 8;
 const SPEAKER_STABLE_FRAMES = 8; // stable for 160 ms
 const SPEAKER_GAP_FRAMES = 15;
 // A line counts as clearly one person's when that person holds at least this much of its audio.
-const CLEAR_SPEAKER_SHARE = 0.7; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
+const CLEAR_SPEAKER_SHARE = 0.7;
+// How many failures on one open session, inside this window, mean the session is no longer usable.
+const LIVE_ERROR_LIMIT = 3;
+const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
 
 // Names the bot answers to on top of the active character's name, and the filler words dropped when
 // deciding whether the name was called on its own or together with a request.
@@ -277,6 +280,9 @@ export class GuildSession {
 		// Told to be quiet by the owner. This is a state, not a request to the model: while it is on, the
 		// bot's audio is dropped before it reaches the channel, so nobody else can talk it into speaking.
 		this.silenced = false;
+		// A realtime session can stay connected while every request on it fails; these count that.
+		this.liveErrorCount = 0;
+		this.liveErrorSince = 0;
 
 		this.taskDeps = this.buildDeps();
 		this.runTask = createTaskRunner(this.taskDeps);
@@ -995,6 +1001,22 @@ export class GuildSession {
 			this.lastLiveError = err; // if the connection closes next, the retry plan should know the reason
 			// Permanent errors are written as one line when the retry is planned; they are not printed again here.
 			if (!info.fatal) this.log(t('runtime.live_error', { code: info.code ? ` (${info.code})` : '', message: info.message }));
+			// A socket that stays open while every request on it fails is worse than one that closes: the
+			// assistant keeps answering as if the work were done. After a few failures in a row the session
+			// is treated as gone, which is what starts the retry and the fallback to the local brain.
+			const now = Date.now();
+			if (now - this.liveErrorSince > LIVE_ERROR_WINDOW_MS) {
+				this.liveErrorSince = now;
+				this.liveErrorCount = 0;
+			}
+			this.liveErrorCount++;
+			if (info.fatal || this.liveErrorCount >= LIVE_ERROR_LIMIT) {
+				if (this.live === session) {
+					this.liveErrorCount = 0;
+					this.log(t('runtime.live_unusable', { message: info.message }));
+					session.close(t('runtime.reason_live_unusable'));
+				}
+			}
 		});
 		session.on('warning', (message) => this.log(t('runtime.live_warning', { message })));
 		if (cfg.debug) session.on('debug', (event) => this.log('live>', event.type));

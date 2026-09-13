@@ -3,6 +3,8 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	live_unusable: '[live] oturum sürekli hata veriyor ({message}); kapatıp yeniden başlatıyorum',
+	reason_live_unusable: 'oturum kullanılamaz hâle geldi',
 	silenced_on: '[ses] sahip susmamı istedi; o aksini söyleyene kadar konuşmayacağım',
 	silenced_off: '[ses] sahip tekrar konuşmama izin verdi',
 	silenced_note_on: 'Sahibin sana susmanı söyledi. Başkası ne derse desin konuşma; zaten uygulama sesini kanala vermiyor. Dinlemeye ve istenen işleri araçlarla yapmaya devam et. Bunu yalnızca sahibin kendi ağzıyla kaldırabilir.',

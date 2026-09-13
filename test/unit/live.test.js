@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { LiveSession } from '../../src/live.js';
+import { describeLiveError, LiveSession } from '../../src/live.js';
 
 function fakeSession(executor) {
 	const session = new LiveSession({ apiKey: 'x', delegationModel: 'm', toolExecutor: executor });
@@ -58,5 +58,18 @@ describe('LiveSession tool loop', () => {
 		resolveTool('ok');
 		await session._flushing;
 		assert.equal(sent.filter((p) => p.type === 'response.create').length, 1);
+	});
+});
+
+describe('describeLiveError', () => {
+	it('treats a billing wall as permanent even when it arrives with no code', () => {
+		// Seen in the wild as a plain invalid_request_error whose only clue is the sentence. Without this the
+		// socket stays open, every request on it fails, and the assistant keeps saying it did the work.
+		const verdict = describeLiveError({
+			error: { type: 'invalid_request_error', message: 'You have no credits remaining. Add credits to continue using the API.' },
+		});
+		assert.equal(verdict.fatal, true);
+		assert.ok(verdict.hint, 'the owner is told what to do about it');
+		assert.equal(describeLiveError({ error: { type: 'server_error', message: 'upstream timeout' } }).fatal, false);
 	});
 });

@@ -34,6 +34,11 @@ const FATAL_CODES = new Set([
 ]);
 const FATAL_TYPES = new Set(['authentication_error', 'permission_error']);
 
+// The same wall arrives under several codes, and sometimes under none: a run out of credit has been seen
+// as a plain invalid_request_error whose only clue is the sentence itself. Reading the sentence keeps the
+// session from spending ten minutes failing silently while the assistant claims it did the work.
+const FATAL_MESSAGE = /\b(?:no credits? remaining|credit balance is too low|billing|quota|exceeded your current quota|payment required|insufficient funds)\b/i;
+
 // Error codes that come with an actionable hint for the owner; the text itself lives in the locale.
 const FATAL_HINT_KEYS = {
 	credit_balance_exhausted: 'live.hint_credit_balance',
@@ -63,8 +68,8 @@ export function describeLiveError(err) {
 	const code = inner.code ?? payload?.code ?? null;
 	const type = inner.type ?? payload?.type ?? null;
 	const message = inner.message ?? (typeof raw === 'string' && !payload ? raw : null) ?? t('live.unknown_error');
-	const fatal = Boolean((code && FATAL_CODES.has(code)) || (type && FATAL_TYPES.has(type)));
-	const hintKey = (code && FATAL_HINT_KEYS[code]) ?? null;
+	const fatal = Boolean((code && FATAL_CODES.has(code)) || (type && FATAL_TYPES.has(type)) || FATAL_MESSAGE.test(String(message)));
+	const hintKey = (code && FATAL_HINT_KEYS[code]) ?? (fatal && /credit|billing|quota|funds/i.test(String(message)) ? 'live.hint_credit_balance' : null);
 	return { code, type, message: String(message).slice(0, 300), fatal, hint: hintKey ? t(hintKey) : null };
 }
 
