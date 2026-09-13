@@ -822,7 +822,10 @@ export class GuildSession {
 		// so every path into a realtime connection (join, resume, retry, persona rebuild) passes it. A guild
 		// over the cap stays silent — music and tools still work — and gets its turn when a session closes.
 		if (!this.canOpenLive(this)) {
-			if (!this.liveBlockedReason) this.log(t('runtime.live_cap_reached', { guild: this.guild?.name ?? this.guild?.id ?? '?', max: this.cfg.maxLiveSessions }));
+			if (!this.liveBlockedReason) {
+				const guild = this.guild?.name ?? this.guild?.id ?? '?';
+				this.log(t('runtime.live_cap_reached', { guild, max: this.cfg.maxLiveSessions }));
+			}
 			this.liveBlockedReason = t('runtime.live_cap_reason', { max: this.cfg.maxLiveSessions });
 			return;
 		}

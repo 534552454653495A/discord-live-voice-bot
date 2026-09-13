@@ -527,6 +527,9 @@ client.once(Events.ClientReady, async () => {
 						const quotaStatus = quota.status();
 						return {
 							title: t('runtime.panel_title', { name: snapshot.personaName ?? t('runtime.panel_default_name') }),
+							// Tells the panel to put the server name in front of each event; with one server the
+							// events carry the tag in their meta but nothing about the page changes.
+							multiGuild: snapshots.length > 1,
 							status:
 								// One server keeps the line it always had; with several, each of them is named with its
 								// own channel and brain so the panel can be read at a glance.

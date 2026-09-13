@@ -281,6 +281,7 @@ function metric(value, label) {
 	box.append(b, s);
 	return box;
 }
+let multiGuild = false;
 function render(state) {
 	document.getElementById('status').textContent = state.status ?? '';
 	if (state.title) document.getElementById('title').textContent = state.title;
@@ -292,6 +293,8 @@ async function tick() {
 		try {
 			const response = await fetch('/api/events?' + params({ since: String(lastId), limit: '200' }));
 			const payload = await response.json();
+			// Read before the rows are built: it decides whether they carry a server name.
+			multiGuild = Boolean(payload.state && payload.state.multiGuild);
 			for (const event of payload.events) {
 				lastId = Math.max(lastId, event.id);
 				list.appendChild(row(event));
@@ -313,7 +316,13 @@ function row(event) {
 	const whoText = event.whoName ? event.whoName : (event.who ?? '');
 	who.textContent = whoText; who.setAttribute('title', whoText);
 	const text = document.createElement('span'); text.className = 'text';
-	text.textContent = event.text + (event.meta && Object.keys(event.meta).length ? '  ' + JSON.stringify(event.meta) : '');
+	// Which server an event came from is stamped on every session event. It is shown as a [name] prefix
+	// only while the bot serves more than one, so a single-server panel reads exactly as it always did.
+	const meta = { ...(event.meta ?? {}) };
+	const guild = meta.guild ?? null;
+	delete meta.guild;
+	const prefix = multiGuild && guild ? '[' + guild + '] ' : '';
+	text.textContent = prefix + event.text + (Object.keys(meta).length ? '  ' + JSON.stringify(meta) : '');
 	el.append(time, badge, who, text);
 	return el;
 }
