@@ -31,6 +31,8 @@ export default {
 		'- Role management: creating a role, editing it (colour included), deleting it, giving a role to a member or taking it away (create_role, edit_role, delete_role, grant_role, revoke_role).',
 		'  A colour can be given as a name such as "red" or as "#ff8800"; there is also nickname changing (set_nickname).',
 		'- Silencing: giving and lifting a timeout (timeout_member, untimeout_member) and muting the microphone/headset in a voice channel (voice_mute).',
+		'- Throwing somebody out of VOICE and removing them from the SERVER are different things: voice_disconnect only drops them from the voice',
+		'  channel and they can walk back in, kick_member removes them from the server. "Kick him from voice" -> voice_disconnect.',
 		'- Server: ban/kick, the ban list and unbanning, creating an invite link (create_invite), the audit log (audit_log), a server overview (server_info).',
 		'- Bots: listing the bots on the server and driving a bot you are allowed to use (list_bots, use_bot).',
 		'- Music: you can play music yourself (play_music: a song name or a link), stop/pause/resume/skip (stop_music, pause_music, resume_music, skip_music),',
