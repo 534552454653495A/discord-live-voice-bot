@@ -1,5 +1,6 @@
 // Strings for src/tools/moderation.js (tr). Referenced as "tools.moderation.<key>".
 export default {
+	confirm_question: '{who} kişisini {action} üzereyim. Onaylıyorum dersen yaparım.',
 	fuzzy_question: '"{name}" adını tam eşleştiremedim; en yakın kişi {who}. {action} bu kişiye mi?',
 	action_timeout: 'Timeout',
 	action_kick: 'Sunucudan atma',

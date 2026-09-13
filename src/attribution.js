@@ -137,15 +137,31 @@ export class SpeakerAttribution {
 	 * Labelling by arrival time points at the wrong person in a busy channel.
 	 */
 	speakerIdAt(startMs, endMs) {
-		if (!Number.isFinite(startMs)) return null;
+		return this.speakerShareAt(startMs, endMs).id;
+	}
+
+	/**
+	 * Who this stretch of audio belongs to, and how much of it is theirs.
+	 *
+	 * With two people talking at once a line can straddle the moment the sent audio switched from one to
+	 * the other, and "whoever holds the most of it" is then a coin toss dressed up as a fact. `share` is
+	 * that person's fraction of the stretch, so the caller can say "I am not sure who said this" instead
+	 * of naming the wrong person confidently.
+	 *
+	 * @returns {{ id: string|null, share: number, speakers: number }}
+	 */
+	speakerShareAt(startMs, endMs) {
+		if (!Number.isFinite(startMs)) return { id: null, share: 0, speakers: 0 };
 		const from = Math.max(0, startMs);
 		const to = Number.isFinite(endMs) && endMs > from ? endMs : from + 400;
 		const totals = new Map();
+		let heard = 0;
 		for (const seg of this.track) {
 			if (!seg.id || seg.endMs <= from || seg.startMs >= to) continue;
 			const overlap = Math.min(seg.endMs, to) - Math.max(seg.startMs, from);
 			if (overlap <= 0) continue;
 			totals.set(seg.id, (totals.get(seg.id) ?? 0) + overlap);
+			heard += overlap;
 		}
 		let best = null;
 		let bestMs = 0;
@@ -155,7 +171,7 @@ export class SpeakerAttribution {
 				bestMs = ms;
 			}
 		}
-		return best;
+		return { id: best, share: heard > 0 ? bestMs / heard : 0, speakers: totals.size };
 	}
 
 	/**

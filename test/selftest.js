@@ -1315,9 +1315,15 @@ await checkAsync('moderation tools: refused without the owner, applied with them
 
 	assert.equal((await callTool('grant_role', { member: 'Ali', role: 'Moderator' }, deps)).ok, true);
 	assert.equal((await callTool('revoke_role', { member: 'Ali', role: 'Moderator' }, deps)).ok, true);
-	assert.equal((await callTool('ban_member', { member: 'Ali', reason: 'test' }, deps)).ok, true);
+	// Banning and kicking always name the target and wait for the answer, however exact the name was.
+	const banAsk = await callTool('ban_member', { member: 'Ali', reason: 'test' }, deps);
+	assert.equal(banAsk.needs_confirmation, true, banAsk.spoken);
+	assert.ok(banAsk.spoken.includes('Ali Veli'), banAsk.spoken);
+	assert.ok(!actions.some((entry) => entry.startsWith('ban:')), 'nothing is banned before the answer');
+	assert.equal((await callTool('ban_member', { member: 'Ali', reason: 'test', confirm: true }, deps)).ok, true);
 	human.kick = async (reason) => actions.push(`kick:${reason}`);
-	assert.equal((await callTool('kick_member', { member: 'Ali', reason: 'behaviour' }, deps)).ok, true);
+	assert.equal((await callTool('kick_member', { member: 'Ali', reason: 'behaviour' }, deps)).needs_confirmation, true);
+	assert.equal((await callTool('kick_member', { member: 'Ali', reason: 'behaviour', confirm: true }, deps)).ok, true);
 	assert.equal(actions.at(-1), 'kick:behaviour');
 	assert.deepEqual(actions.slice(0, 4), ['timeout:300000:spam', 'add:Moderator', 'remove:Moderator', 'ban:Ali Veli:test']);
 
@@ -1629,7 +1635,11 @@ await checkAsync('END TO END: real audio -> transcript attribution -> ban allowe
 	}
 	attribution.noteTranscript('okay ban garko', { startMs: 1200, endMs: 1500 });
 	assert.equal(attribution.isOwnerActive(), true, 'the owner spoke last');
-	const allowed = await callTool('ban_member', { member: 'Ali' }, deps);
+	// The gate lets it through, and then the tool still names the target and waits for the answer.
+	const asked = await callTool('ban_member', { member: 'Ali' }, deps);
+	assert.equal(asked.needs_confirmation, true, asked.spoken);
+	assert.deepEqual(actions, [], 'the gate opening is not the same as being told to do it');
+	const allowed = await callTool('ban_member', { member: 'Ali', confirm: true }, deps);
 	assert.equal(allowed.ok, true, allowed.spoken);
 	assert.deepEqual(actions, ['ban:Ali']);
 

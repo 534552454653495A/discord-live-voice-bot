@@ -59,7 +59,9 @@ const TURN_MEMORY = 8;
 // person in the mix. This is used instead of Discord's "started speaking" event; short noises cutting in do
 // not steal the announcement.
 const SPEAKER_STABLE_FRAMES = 8; // stable for 160 ms
-const SPEAKER_GAP_FRAMES = 15; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
+const SPEAKER_GAP_FRAMES = 15;
+// A line counts as clearly one person's when that person holds at least this much of its audio.
+const CLEAR_SPEAKER_SHARE = 0.7; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
 
 // Names the bot answers to on top of the active character's name, and the filler words dropped when
 // deciding whether the name was called on its own or together with a request.
@@ -1128,9 +1130,14 @@ export class GuildSession {
 	onTranscript({ speaker, text, startMs, endMs }) {
 		const cfg = this.cfg;
 		let spokenId = null;
+		let contested = false;
 		if (speaker === 'user') {
 			this.attribution.noteTranscript(text, { startMs, endMs });
 			this.lastUserDeltaAt = Date.now();
+			// How cleanly this fragment belongs to one person; a line built from contested fragments is
+			// labelled as uncertain rather than attributed to whoever happened to be louder.
+			const share = this.attribution.speakerShareAt(startMs, endMs);
+			if (share.speakers > 1 && share.share < CLEAR_SPEAKER_SHARE) contested = true;
 			// Who said it: resolved from the audio position (the arrival time misleads in a busy channel).
 			spokenId = this.attribution.speakerIdAt(startMs, endMs);
 			// From the audio position to the wall clock: when did the user actually stop speaking?
@@ -1151,10 +1158,11 @@ export class GuildSession {
 		}
 		let buf = this.transcriptBuffers.get(speaker);
 		if (!buf) {
-			buf = { text: '', timer: null, speakerId: null, endMs: null };
+			buf = { text: '', timer: null, speakerId: null, endMs: null, contested: false };
 			this.transcriptBuffers.set(speaker, buf);
 		}
 		if (spokenId) buf.speakerId = spokenId;
+		if (contested) buf.contested = true;
 		if (Number.isFinite(endMs)) buf.endMs = endMs;
 		buf.text += text;
 		if (buf.timer) clearTimeout(buf.timer);
@@ -1163,6 +1171,8 @@ export class GuildSession {
 			const line = buf.text.replace(/\s+/g, ' ').trim();
 			const speakerId = buf.speakerId ?? this.lastSpeakerId;
 			const lineEndMs = buf.endMs;
+			const lineContested = buf.contested === true;
+			buf.contested = false;
 			buf.text = '';
 			buf.speakerId = null; // let the next line work out its own identity
 			buf.endMs = null;
@@ -1176,7 +1186,15 @@ export class GuildSession {
 				if (cfg.announceSpeaker && speakerId && this.live?.ready) {
 					const crowded = this.recentSpeakerCount() >= 3;
 					const contradicts = this.lastAnnouncedUser && String(speakerId) !== String(this.lastAnnouncedUser);
-					if (crowded || contradicts) {
+					if (lineContested) {
+						// Two voices ran into each other here. Saying who said it would be a guess, and the
+						// assistant acts on these lines, so the guess is the expensive kind.
+						this.live.appendContext(
+							'thinking',
+							t('runtime.speaker_line_unclear', { name: safeContext(this.nameFor(speakerId)), line: safeContext(line).slice(0, 200) }),
+						);
+						if (cfg.transcripts) this.log(t('runtime.log_context_unclear', { line: line.slice(0, 40) }));
+					} else if (crowded || contradicts) {
 						const name = safeContext(this.nameFor(speakerId));
 						this.lastAnnouncedUser = String(speakerId);
 						// "thinking", not "instructions": this carries somebody's words, and words spoken in the

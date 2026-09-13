@@ -1,5 +1,6 @@
 // Strings for src/tools/moderation.js (en). Referenced as "tools.moderation.<key>".
 export default {
+	confirm_question: 'I am about to {action} {who}. Say that you confirm and I will do it.',
 	fuzzy_question: 'I could not match the name "{name}" exactly; the closest person is {who}. Should the {action} go to them?',
 	action_timeout: 'timeout',
 	action_kick: 'kick',

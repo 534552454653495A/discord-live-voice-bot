@@ -17,15 +17,24 @@ import {
 import { P, defineTool } from './registry.js';
 
 /** Ask for confirmation on a fuzzy match; pass straight through on an exact match or once confirmed. */
-function confirmIfFuzzy(deps, { name, args, member, exact, action }) {
-	if (exact) return null;
-	const decision = checkConfirmation(deps, {
-		key: name,
-		target: member.id,
-		confirm: args.confirm,
-		question: t('tools.moderation.fuzzy_question', { name: args.member, who: displayName(member), action }),
-	});
-	if (decision.ask) return askConfirmation(decision.ask, { member: displayName(member), fuzzy: true });
+/**
+ * Asks before acting on a person.
+ *
+ * `always` is set for kicking and banning: those remove somebody from the server, and the assistant only
+ * has a transcript of a room where several people talk over each other. "Adem, try to get me banned"
+ * reads a great deal like "ban Adem", and the owner did say the word "ban" — the gate is satisfied and
+ * cannot tell the difference. Naming the target out loud and waiting for a yes is what catches it.
+ *
+ * A name that only matched approximately is asked about whatever the action is, because then even the
+ * target is a guess.
+ */
+function confirmBefore(deps, { name, args, member, exact, action, always = false }) {
+	if (exact && !always) return null;
+	const question = exact
+		? t('tools.moderation.confirm_question', { who: displayName(member), action })
+		: t('tools.moderation.fuzzy_question', { name: args.member, who: displayName(member), action });
+	const decision = checkConfirmation(deps, { key: name, target: member.id, confirm: args.confirm, question });
+	if (decision.ask) return askConfirmation(decision.ask, { member: displayName(member), fuzzy: !exact });
 	if (decision.stale) return STALE_CONFIRMATION();
 	return null;
 }
@@ -47,7 +56,7 @@ export const tools = [
 		async handler(args, deps, { name }) {
 			const { member, exact } = await findMemberDetailed(deps, String(args.member ?? ''));
 			if (!member) return { ok: false, spoken: t('tools.moderation.member_not_found', { name: args.member }) };
-			const pending = confirmIfFuzzy(deps, { name, args, member, exact, action: t('tools.moderation.action_timeout') });
+			const pending = confirmBefore(deps, { name, args, member, exact, action: t('tools.moderation.action_timeout') });
 			if (pending) return pending;
 			const minutes = Math.min(Math.max(Number(args.minutes ?? 10) || 10, 1), 40_320);
 			if (member.moderatable === false) {
@@ -84,13 +93,13 @@ export const tools = [
 
 	defineTool({
 		name: 'kick_member',
-		description: 'Removes a member FROM THE SERVER (kick). They can rejoin with a new invite. This is not the same as throwing them out of a voice channel -- for that use voice_disconnect. Owner only; asks for confirmation when the name is not an exact match.',
+		description: 'Removes a member FROM THE SERVER (kick). They can rejoin with a new invite. This is not the same as throwing them out of a voice channel -- for that use voice_disconnect. Owner only; asks for confirmation when the name is not an exact match. Always asks first: say the confirmation before it runs.',
 		parameters: P.obj({ member: P.str('Member name'), reason: P.str('Reason (optional)'), confirm: P.confirm() }, ['member']),
 		gate: { keywords: WORDS.kick },
 		async handler(args, deps, { name }) {
 			const { member, exact } = await findMemberDetailed(deps, String(args.member ?? ''));
 			if (!member) return { ok: false, spoken: t('tools.moderation.member_not_found', { name: args.member }) };
-			const pending = confirmIfFuzzy(deps, { name, args, member, exact, action: t('tools.moderation.action_kick') });
+			const pending = confirmBefore(deps, { name, args, member, exact, action: t('tools.moderation.action_kick'), always: true });
 			if (pending) return pending;
 			if (member.kickable === false) {
 				return { ok: false, spoken: t('tools.moderation.no_kick_permission', { who: displayName(member, t('tools.moderation.that_person')) }) };
@@ -108,7 +117,7 @@ export const tools = [
 
 	defineTool({
 		name: 'ban_member',
-		description: 'Bans a member from the server. Owner only.',
+		description: 'Bans a member from the server. Owner only. Always asks first: say the confirmation before it runs.',
 		parameters: P.obj(
 			{
 				member: P.str('Member name'),
@@ -122,7 +131,7 @@ export const tools = [
 		async handler(args, deps, { name }) {
 			const { member, exact } = await findMemberDetailed(deps, String(args.member ?? ''));
 			if (!member) return { ok: false, spoken: t('tools.moderation.member_not_found', { name: args.member }) };
-			const pending = confirmIfFuzzy(deps, { name, args, member, exact, action: t('tools.moderation.action_ban') });
+			const pending = confirmBefore(deps, { name, args, member, exact, action: t('tools.moderation.action_ban'), always: true });
 			if (pending) return pending;
 			if (member.bannable === false) {
 				return { ok: false, spoken: t('tools.moderation.no_ban_permission', { who: displayName(member, t('tools.moderation.that_person')) }) };

@@ -3,6 +3,8 @@
 // Everything src/index.js says once the bot is running: console lines, panel/activity entries, the
 // owner DMs, and the context notes handed to the model (speaker announcements, wake-word nudges).
 export default {
+	speaker_line_unclear: 'Burada iki kişi aynı anda konuştu, kimin söylediğinden emin değilim. En çok {name} gibiydi: "{line}"',
+	log_context_unclear: '[bağlam] konuşan belirsiz: "{line}"',
 	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[kayıt kapalı: {count} karakter]',

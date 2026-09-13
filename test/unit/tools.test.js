@@ -559,9 +559,15 @@ describe('moderation: confirmation on a fuzzy name match', () => {
 		assert.ok(sent.some((s) => s.kick === '1'));
 	});
 
-	it('kick_member asks for no confirmation when the name matches exactly', async () => {
+	it('kick_member names the target and waits, even when the name matched exactly', async () => {
+		// Removing somebody from the server is not undone by saying sorry, and the assistant only has a
+		// transcript of a room where people talk over each other, so it always asks first.
 		const { deps, sent } = makeDeps({ owner: true });
-		const done = await callTool('kick_member', { member: 'Jane' }, deps);
+		const asked = await callTool('kick_member', { member: 'Jane' }, deps);
+		assert.equal(asked.needs_confirmation, true, asked.spoken);
+		assert.match(asked.spoken, /Jane Doe/, 'the target is said out loud');
+		assert.ok(!sent.some((s) => s.kick), 'nobody is removed before the answer');
+		const done = await callTool('kick_member', { member: 'Jane', confirm: true }, deps);
 		assert.equal(done.ok, true, done.spoken);
 		assert.ok(sent.some((s) => s.kick === '1'));
 	});
