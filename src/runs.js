@@ -32,6 +32,17 @@ export function runEnd(run) {
 	return end;
 }
 
+/** The stretch of audio a run covers, or null when none of its parts carried a position. */
+export function runSpan(run) {
+	let start = null;
+	let end = null;
+	for (const part of run.parts) {
+		if (Number.isFinite(part.startMs) && (start === null || part.startMs < start)) start = part.startMs;
+		if (Number.isFinite(part.endMs) && (end === null || part.endMs > end)) end = part.endMs;
+	}
+	return start === null || end === null ? null : [start, end];
+}
+
 export function runSpanMs(run) {
 	let start = null;
 	let end = null;

@@ -14,7 +14,7 @@ import { ActivityType } from 'discord.js';
 import { ChannelType } from 'discord.js';
 import { createTaskRunner, executeAction } from './agent.js';
 import { FRAME_MS, PlaybackQueue, SpeakerMixer, peakOf } from './audio.js';
-import { buildRuns, runCandidates, runEnd, runText } from './runs.js';
+import { buildRuns, runCandidates, runEnd, runSpan, runText } from './runs.js';
 import { SpeakerAttribution } from './attribution.js';
 import { parseVoiceCommand } from './commands.js';
 import { t, tList, tRaw } from './i18n/index.js';
@@ -1269,7 +1269,7 @@ export class GuildSession {
 		const lines = [];
 		for (const run of buildRuns(parts)) {
 			const line = runText(run);
-			if (line) lines.push({ line, id: run.id, mixed: run.mixed, endMs: runEnd(run), candidates: runCandidates(run) });
+			if (line) lines.push({ line, ...this.resolveLine(run), endMs: runEnd(run) });
 		}
 		if (!lines.length) return;
 
@@ -1296,6 +1296,30 @@ export class GuildSession {
 		this.maybeWakeByVoiceName(all);
 
 		for (const item of lines) this.runVoiceCommand(item);
+	}
+
+	/**
+	 * Whose line is it? The deltas decided where the line was CUT; who OWNS it is asked once over the
+	 * whole stretch it covers.
+	 *
+	 * A delta is shorter than a word, and the first one of a turn lands while the previous speaker is
+	 * still counted as talking. Judging the line by its worst delta therefore condemned nearly every line
+	 * in a busy channel, which is how a session ended up running no voice commands at all. Over the whole
+	 * stretch the same audio reads clearly: one voice holding nine tenths of it is one voice.
+	 */
+	resolveLine(run) {
+		const span = runSpan(run);
+		const hit = span ? this.attribution.resolveSpeaker(span[0], span[1]) : null;
+		// No position on any part (or nothing in the track for it): fall back on what the deltas said.
+		if (!hit || hit.heardMs <= 0) return { id: run.id, mixed: run.mixed, candidates: runCandidates(run) };
+		const candidates = hit.ids.length ? hit.ids : runCandidates(run);
+		return {
+			id: hit.confidence === 'unsure' ? null : hit.id,
+			// A run that swallowed somebody else's words stays mixed however clean the audio looks: the
+			// text really does hold two people.
+			mixed: run.mixed || hit.confidence !== 'sure',
+			candidates,
+		};
 	}
 
 	/** A finished line may run a voice command. A line that is not provably one person's may not. */

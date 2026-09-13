@@ -150,12 +150,15 @@ export class Ring {
 const SPEECH_PEAK = 400;
 // Speech has to clear that bar for two frames (40 ms) before it counts, so one click is not a speaker.
 const SPEECH_ONSET_FRAMES = 2;
-// It then stays that person's turn for half a second after their last loud frame. Discord sends no
-// packets during a pause, and a gap shorter than ~500 ms is a gap between words, not the end of a
-// sentence -- the same threshold Craig (the recording bot) uses to tell a real silence from jitter
-// before it fills one in. Without the hold the label flickered between everyone in the room and every
-// pause for breath handed the sentence to whoever had the noisiest microphone.
-const SPEECH_HOLD_FRAMES = 25;
+// It then stays that person's turn for 200 ms after their last loud frame, which covers the gaps
+// between words and the jitter Discord delivers packets with.
+//
+// This number was half a second at first, borrowed from where a recording bot stops calling a gap
+// jitter. That was the wrong thing to borrow: a gap is EXCLUDED from the audible time downstream, so a
+// long hold buys nothing there, while it does put two people who merely take turns in the same frame.
+// Measured in a real channel, a quarter of a second between turns was enough to have the whole room
+// reading as "everybody talking at once", and every voice command in the session was refused for it.
+const SPEECH_HOLD_FRAMES = 10;
 // The priority speaker keeps the channel to themselves for the same half second of quiet, but only
 // while their packets are still arriving...
 const FLOOR_HOLD_FRAMES = 25;

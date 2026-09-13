@@ -202,6 +202,50 @@ describe('who the model is told said a line', () => {
 		assert.equal(room.spoken().length, 1, 'and it is not recorded a second time by a stale timer');
 	});
 
+	// Measured in a real session: three people taking turns, and every single line came back as "two
+	// voices at once", so not one voice command ran all evening. Two causes, both of them ours: the mixer
+	// kept somebody in the speaking list for half a second after they stopped, so a handover looked like
+	// an overlap; and one contaminated fragment condemned the whole line it sat in.
+	it('does not call an ordinary handover an overlap', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		// A talks in bursts, the way speech really arrives, then a quarter second later B answers.
+		const burst = (who, bursts) => {
+			for (let b = 0; b < bursts; b++) {
+				room.voices(who, 10);
+				room.quiet(4);
+			}
+		};
+		const start = room.at();
+		burst('guest', 5);
+		const guestEnd = room.at();
+		room.quiet(13); // 260 ms between the turns
+		const thirdStart = room.at();
+		burst('third', 5);
+		const thirdEnd = room.at();
+
+		// The transcript arrives in fragments, including one right at the start of the second turn.
+		room.delta('bence ', start, start + 400);
+		room.delta('olmaz oyle ', start + 400, guestEnd);
+		room.delta('neden ', thirdStart, thirdStart + 300);
+		room.delta('olmasin ki', thirdStart + 300, thirdEnd);
+		t.mock.timers.tick(1300);
+
+		assert.deepEqual(
+			room.spoken(),
+			[
+				{ who: 'guest', text: 'bence olmaz oyle' },
+				{ who: 'third', text: 'neden olmasin ki' },
+			],
+			'two turns, two names, no overlap anywhere',
+		);
+		assert.deepEqual(
+			room.commanded.map((item) => item.mixed),
+			[false, false],
+			'and both lines are clean enough to run a command',
+		);
+	});
+
 	it('keeps the owner as the owner while somebody else has a microphone open', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession();

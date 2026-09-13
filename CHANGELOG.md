@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-09-14
+
+### Fixed
+
+- **Everybody in a busy channel read as "talking at once", and no voice command ran.** Two causes, both
+  introduced in 1.7.0/1.8.0. The mixer kept a speaker in its list for half a second after their last
+  loud frame, so an ordinary handover between two people looked like an overlap; a quarter of a second
+  between turns was enough. The hold is now 200 ms, which still covers the gaps between words and the
+  jitter packets arrive with. A gap is excluded from the audible time anyway, so the long hold bought
+  nothing and cost everything.
+- **One contaminated fragment condemned the whole line it sat in.** A delta is shorter than a word and
+  the first one of a turn lands while the previous speaker is still counted as talking, so judging a
+  line by its worst fragment refused nearly every line. The fragments still decide where a line is cut;
+  who owns it is now asked once over the whole stretch it covers.
+
 ## [1.8.0] — 2026-09-14
 
 ### Added
