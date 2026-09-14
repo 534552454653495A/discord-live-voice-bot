@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] — 2026-09-14
+
+### Added
+
+- **"Me" is a person.** "Write to me", "my roles", "move me down": the bot answered that "me" does not
+  appear as a name, which is true and beside the point. When no real member matches, a word for oneself
+  now resolves to whoever is speaking, in every tool that takes a member. It is tried last, so somebody
+  actually nicknamed "Ben" keeps the name they have.
+
 ## [1.12.2] — 2026-09-14
 
 ### Changed

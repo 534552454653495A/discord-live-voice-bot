@@ -5,6 +5,9 @@
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
 	// Ways of saying "the private conversation we just had" (delete_messages / edit_message dm argument).
+	// "Write to me", "my roles", "move me down": not a name, but the person saying it. Only consulted
+	// when no real name matched, so somebody actually called "Me" keeps the name they have.
+	self_words: ['me', 'myself', 'my', 'mine', 'i'],
 	last_dm_words: ['last', 'the last one', 'that one', 'it', 'latest', 'previous'],
 	// How the bot's own status line and online state may be spoken (src/tools/identity.js).
 	presence_status: {

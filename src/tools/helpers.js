@@ -152,6 +152,16 @@ export async function findMemberDetailed(deps, name) {
 	const voiceHit = pickBest(voiceEntries, needle, { botChannelId, voiceChannelOf: () => null });
 	if (voiceHit?.raw) return { member: voiceHit.raw, exact: nameScore(voiceHit.names, needle) > 0 };
 
+	// 4) "Write to me", "my roles", "move me down". The person saying it is the answer, and no member is
+	// called "me". Tried LAST so that somebody actually nicknamed "Ben" still wins the name they have.
+	const speakerId = String(deps.currentSpeakerId?.() ?? '');
+	if (speakerId && tList('keywords.self_words').includes(needle)) {
+		const live = deps.guild.members.cache.get(speakerId);
+		if (live) return { member: live, exact: true };
+		const fetched = await deps.guild.members.fetch(speakerId).catch(() => null);
+		if (fetched) return { member: fetched, exact: true };
+	}
+
 	deps.log?.(t('tools.helpers.log_member_not_found', { name }));
 	return { member: null, exact: false };
 }

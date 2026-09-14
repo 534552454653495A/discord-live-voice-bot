@@ -19,6 +19,7 @@ import { AuditLogEvent, ChannelType } from 'discord.js';
 import { WebSocketServer } from 'ws';
 import prism from 'prism-media';
 import { AudioBridge } from '../src/bridge.js';
+import { findMember } from '../src/tools/helpers.js';
 import { SpeakerAttribution } from '../src/attribution.js';
 import { createTaskRunner, executeAction } from '../src/agent.js';
 import {
@@ -845,6 +846,25 @@ await checkAsync('read_messages: the first read returns the last messages, later
 // the bot was perfectly able to send one.
 // "What are my roles" arrives with an empty name; looking up an empty string used to fail with
 // "I could not find anyone called ''".
+// "Write to me from the DM" was answered with "'me' does not appear as a name in the system". It is not
+// a name; it is the person saying it.
+await checkAsync('a member called "me" is whoever is speaking, and a real name still wins', async () => {
+	const { deps, guild } = makeToolDeps();
+	guild.members.cache.set('9', { id: '9', displayName: 'Kaan', user: { username: 'kaan', bot: false }, roles: { cache: new Map() } });
+	guild.members.cache.set('10', { id: '10', displayName: 'Ben', user: { username: 'ben', bot: false }, roles: { cache: new Map() } });
+	deps.currentSpeakerId = () => '9';
+
+	// The suite runs in English, so the English words for oneself are the ones under test here; the
+	// Turkish list is the same mechanism with different data.
+	const me = await findMember(deps, 'me');
+	assert.equal(me?.id, '9', 'the person talking is what "me" means');
+	const alsoMe = await findMember(deps, 'myself');
+	assert.equal(alsoMe?.id, '9');
+	// Somebody really called Ben keeps their own name: the self words are the LAST thing tried.
+	const named = await findMember(deps, 'Ben');
+	assert.equal(named?.id, '10', 'a real name wins over the word for oneself');
+});
+
 await checkAsync('member_roles: an empty name means whoever is speaking', async () => {
 	const { deps, guild } = makeToolDeps();
 	guild.members.cache.set('7', {

@@ -5,6 +5,9 @@
 // what was actually heard, so they must be real words of THIS locale, not translations of the keys.
 export default {
 	// Ways of saying "the private conversation we just had" (delete_messages / edit_message dm argument).
+	// "Bana yaz", "benim rollerim", "beni aşağı al": bunlar isim değil, konuşan kişinin kendisi.
+	// Yalnızca gerçek bir isim eşleşmediğinde bakılır, yani "Ben" takma adlı biri kendi adını kaybetmez.
+	self_words: ['ben', 'bana', 'beni', 'bende', 'benim', 'benimki', 'kendim', 'kendime', 'kendimi'],
 	last_dm_words: ['son', 'sonuncu', 'o', 'onu', 'az onceki', 'az önceki', 'biraz onceki'],
 	// How the bot's own status line and online state may be spoken (src/tools/identity.js).
 	presence_status: {
