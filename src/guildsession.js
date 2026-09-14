@@ -74,6 +74,8 @@ const LINE_MAX_MS = 8000;
 // A word is not worth more than a couple of seconds of delay.
 const LINE_HARD_MAX_MS = 12_000;
 const PARTS_MAX = 2000; // insurance against a pathological delta rate; bounds the buffer's memory
+// How many transcript fragments to watch before saying which shape their time windows arrive in.
+const WINDOW_SHAPE_SAMPLE = 24;
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -1210,10 +1212,10 @@ export class GuildSession {
 		// that is NEW since the last one. When the API does send a per-fragment window this changes
 		// nothing, because the window already starts where the last one ended.
 		let from = startMs;
-		if (Number.isFinite(buf.lastEnd) && Number.isFinite(from) && Number.isFinite(endMs) && from < buf.lastEnd && endMs > buf.lastEnd) {
-			from = buf.lastEnd;
-		}
+		const straddles = Number.isFinite(buf.lastEnd) && Number.isFinite(from) && Number.isFinite(endMs) && from < buf.lastEnd && endMs > buf.lastEnd;
+		if (straddles) from = buf.lastEnd;
 		if (Number.isFinite(endMs) && (!Number.isFinite(buf.lastEnd) || endMs > buf.lastEnd)) buf.lastEnd = endMs;
+		if (speaker === 'user') this.noteWindowShape(straddles);
 		let part = { text, startMs: from, endMs, id: null, sure: false, confidence: 'unsure', ids: [] };
 		if (speaker === 'user') {
 			// ONE resolution per delta, made where the audio track lives and then reused for the record, for
@@ -1254,6 +1256,30 @@ export class GuildSession {
 			return;
 		}
 		buf.timer = setTimeout(() => this.flushTranscript(speaker), cfg.transcriptFlushMs ?? TRANSCRIPT_FLUSH_MS);
+	}
+
+	/**
+	 * Says once, out loud, which shape the transcript windows arrive in.
+	 *
+	 * Everything about whose words a line is rests on what [start_ms, end_ms] means: the stretch THIS
+	 * fragment covers, or how far the utterance has got. The handling works either way -- a fragment is
+	 * judged on the audio that is new since the last one -- but which one it is was worked out from a
+	 * pattern across four lines of a pasted log, and a guess that load-bearing should not stay a guess.
+	 * So the bot counts and reports it: one line per session, after enough fragments to be sure.
+	 */
+	noteWindowShape(straddles) {
+		if (this.windowShapeSaid) return;
+		this.windowDeltas = (this.windowDeltas ?? 0) + 1;
+		if (straddles) this.windowStraddles = (this.windowStraddles ?? 0) + 1;
+		if (this.windowDeltas < WINDOW_SHAPE_SAMPLE) return;
+		this.windowShapeSaid = true;
+		const straddled = this.windowStraddles ?? 0;
+		this.log(
+			t(straddled > this.windowDeltas / 2 ? 'runtime.window_shape_cumulative' : 'runtime.window_shape_per_fragment', {
+				straddled,
+				total: this.windowDeltas,
+			}),
+		);
 	}
 
 	/**
@@ -1395,7 +1421,9 @@ export class GuildSession {
 				? candidates.map((candidate) => safeContext(this.speakerLabel(candidate))).join(t('runtime.name_join'))
 				: t('runtime.someone');
 			this.live.appendContext('thinking', t('runtime.speaker_line_overlap', { names, line: clipped }));
-			if (this.cfg.transcripts) this.log(t('runtime.log_context_overlap', { line: line.slice(0, 40) }));
+			// Naming them in the log too: "two voices at once" on its own says nothing about whether the
+			// judgement was right, and this log is the only evidence there is after the fact.
+			if (this.cfg.transcripts) this.log(t('runtime.log_context_overlap', { names, line: line.slice(0, 40) }));
 			return; // lastAnnouncedUser is deliberately NOT touched: the model was told no name
 		}
 		const name = safeContext(this.speakerLabel(id));

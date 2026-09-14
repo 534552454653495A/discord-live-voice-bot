@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.2] — 2026-09-14
+
+### Added
+
+- **The bot says which shape the transcript time windows arrive in**, once per session, after enough
+  fragments to be sure. Whose words a line is rests entirely on whether a fragment's window covers that
+  fragment or the whole utterance so far, and which one it is had been worked out from a pattern across
+  four lines of a log. The handling is correct either way, but a load-bearing inference should not stay
+  an inference.
+- **The overlap log line names the voices it could not tell apart.** "Two voices at once" on its own says
+  nothing about whether the judgement was right, and after the fact the log is the only evidence there is.
+
 ## [1.9.1] — 2026-09-14
 
 ### Changed

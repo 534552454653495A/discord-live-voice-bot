@@ -422,6 +422,34 @@ describe('who the model is told said a line', () => {
 		);
 	});
 
+	// Everything about whose words a line is rests on what the transcript's time windows mean, and which
+	// shape they arrive in was worked out from a pattern across four lines of a pasted log. The bot now
+	// counts it and says so, once, so the next log is evidence instead of another inference.
+	it('says out loud which shape the transcript windows arrive in', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const cumulative = makeRoomSession();
+		cumulative.session.cfg.transcriptFlushMs = 60_000;
+		for (let i = 0; i < 24; i++) {
+			cumulative.voices('guest', 10);
+			cumulative.delta(`soz${i} `, 0, (i + 1) * 200); // every window starts at zero
+		}
+		assert.ok(
+			cumulative.logged.some((line) => /kümülatif|cumulative/.test(line)),
+			`the cumulative shape is reported: ${cumulative.logged.join(' | ')}`,
+		);
+
+		const perFragment = makeRoomSession();
+		perFragment.session.cfg.transcriptFlushMs = 60_000;
+		for (let i = 0; i < 24; i++) {
+			perFragment.voices('guest', 10);
+			perFragment.delta(`soz${i} `, i * 200, (i + 1) * 200); // each window starts where the last ended
+		}
+		assert.ok(
+			perFragment.logged.some((line) => /parça başına|per fragment/.test(line)),
+			`the per-fragment shape is reported: ${perFragment.logged.join(' | ')}`,
+		);
+	});
+
 	it('keeps the owner as the owner while somebody else has a microphone open', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession();
