@@ -316,6 +316,13 @@ export class MusicPlayer {
 		track.requestedBy = requestedBy;
 		track.id = ++this.seq;
 		if (this.queue.length >= this.maxQueue) throw new Error(QUEUE_FULL);
+		// Already playing, or already waiting? Then this is the same request arriving twice, which is what
+		// a model answering "sure, changing it" and then both skipping AND queueing produces. The song came
+		// back round on its own when it finished, and from the outside it looked like the music would not
+		// end. Saying so is more use than a second copy nobody asked for.
+		const same = (other) => other && (other.url ? other.url === track.url : other.title === track.title);
+		const duplicate = same(this.current) || this.queue.some(same);
+		if (duplicate) return { track, position: this.queue.length, startedNow: false, duplicate: true };
 		this.queue.push(track);
 		const position = this.queue.length;
 		if (!this.current) {
@@ -456,7 +463,13 @@ export class MusicPlayer {
 		this.current = null;
 		this.paused = false;
 		this.decodeDone = false;
-		if (had) this.log(t('music.log_stopped', { title: had.title }));
+		if (had) {
+			this.log(t('music.log_stopped', { title: had.title }));
+			// Whoever is watching the bot's profile is told what it is listening to when a track starts, and
+			// that only ever came back off when a track ENDED. Stopping the music left "listening to" sitting
+			// on the profile with a song nobody could hear. `stopped` lets the listener tell the two apart.
+			this.onTrackEnd?.(had, { queueEmpty: true, stopped: true });
+		}
 		return had;
 	}
 

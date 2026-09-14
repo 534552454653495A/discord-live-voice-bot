@@ -82,6 +82,9 @@ const WINDOW_SHAPE_SAMPLE = 24;
 // needs a line that is provably one person's, because the worst case there is somebody else's words
 // acting under a name that is not theirs.
 const HARMLESS_VOICE_ACTIONS = new Set(['music', 'read', 'status', 'help', 'panel', 'summary']);
+// How many times a session will spell out a line that had no audio under it. Enough to see the pattern,
+// few enough not to become the log.
+const NO_AUDIO_SAMPLE = 6;
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -209,11 +212,12 @@ export class GuildSession {
 							meta: { source: track.kind },
 						});
 					},
-					onTrackEnd: (track, { queueEmpty }) => {
-						if (queueEmpty) {
-							this.showPresence(null);
-							this.activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
-						}
+					onTrackEnd: (track, { queueEmpty, stopped }) => {
+						if (!queueEmpty) return;
+						this.showPresence(null);
+						// A track that was stopped has already been logged as stopped; saying it "finished" as
+						// well would be two different accounts of the same moment.
+						if (!stopped) this.activity.push({ kind: 'music', text: t('runtime.music_finished', { title: track.title }) });
 					},
 					onError: (track, message) =>
 						this.activity.push({ kind: 'music', text: t('runtime.music_failed', { title: track.title, error: message }) }),
@@ -299,6 +303,7 @@ export class GuildSession {
 		// Told to be quiet by the owner. This is a state, not a request to the model: while it is on, the
 		// bot's audio is dropped before it reaches the channel, so nobody else can talk it into speaking.
 		this.silenced = false;
+		this.noAudioSaid = 0; // how many times this session has spelled out a line with no audio under it
 		// A realtime session can stay connected while every request on it fails; these count that.
 		this.liveErrorCount = 0;
 		this.liveErrorSince = 0;
@@ -1364,6 +1369,22 @@ export class GuildSession {
 	resolveLine(run) {
 		const span = runSpan(run);
 		const hit = span ? this.attribution.resolveSpeaker(span[0], span[1]) : null;
+		// Still happening in the field and I will not guess at it a third time. When a line turns out to
+		// have no audio under it at all, say where it was looking and where the audio actually is: the
+		// distance between those two numbers is the answer, and one session's worth of them settles it.
+		if (span && hit && !hit.id && !hit.ids.length && this.noAudioSaid < NO_AUDIO_SAMPLE) {
+			this.noAudioSaid++;
+			const track = this.attribution.track;
+			const lastEnd = track.length ? track[track.length - 1].endMs : null;
+			this.log(
+				t('runtime.log_no_audio_detail', {
+					from: Math.round(span[0]),
+					to: Math.round(span[1]),
+					audio: Math.round(this.attribution.audioMs),
+					lastEnd: lastEnd === null ? '-' : Math.round(lastEnd),
+				}),
+			);
+		}
 		// No position on any part (or nothing in the track for it): fall back on what the deltas said.
 		if (!hit || (hit.heardMs <= 0 && !hit.id)) return { id: run.id, mixed: run.mixed, candidates: runCandidates(run) };
 		const candidates = hit.ids.length ? hit.ids : runCandidates(run);

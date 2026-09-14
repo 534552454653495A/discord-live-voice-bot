@@ -13,6 +13,7 @@ export default {
 	window_shape_cumulative: '[deşifre] zaman aralıkları kümülatif: {total} parçanın {straddled} tanesi öncekini de kapsıyordu, bu yüzden her parça yalnızca yeni sesi üzerinden değerlendiriliyor',
 	window_shape_per_fragment: '[deşifre] zaman aralıkları parça başına: {total} parçanın yalnızca {straddled} tanesi öncekiyle kesişti',
 	speaker_line_unknown: 'Kanalda biri şunu söyledi, sesten kim olduğu anlaşılmıyor: "{line}"',
+	log_no_audio_detail: '[deşifre] {from}-{to} ms için ses yok; ses {audio} ms konumunda, son duyulan {lastEnd} ms de bitti',
 	log_context_unknown: '[bağlam] bu sözlerin altında ses kaydı yok: "{line}"',
 	log_context_overlap: '[bağlam] aynı anda iki ses ({names}): "{line}"',
 	log_command_unclear: '[komut] çalıştırılmadı, satır tek kişiye ait değil: "{line}"',

@@ -2,6 +2,7 @@
 export default {
 	ytdlp_missing: 'yt-dlp kurulu değil, müziği getiremiyorum. Kurup YTDLP_PATH ver ya da YTDLP_AUTO_DOWNLOAD ayarını aç.',
 	play_failed_generic: 'Bunu çalamadım.',
+	already_queued: '{title} zaten çalıyor ya da sırada bekliyor, ikinci kez eklemedim.',
 	queue_full: 'Sıra dolu; önce birkaç parça bitsin.',
 	unsupported_link: 'Yalnızca bilinen müzik sitelerinin linklerini çalabiliyorum; şarkının adını söyle, bulurum.',
 	disabled: 'Müzik özelliği bu kurulumda kapalı (.env: MUSIC=1).',

@@ -2,6 +2,7 @@
 export default {
 	ytdlp_missing: 'I do not have yt-dlp installed, so I cannot fetch music. Install it and set YTDLP_PATH, or turn YTDLP_AUTO_DOWNLOAD back on.',
 	play_failed_generic: 'I could not play that.',
+	already_queued: '{title} is already playing or waiting in the queue, so I have left it as it is.',
 	queue_full: 'The queue is full; let some tracks finish first.',
 	unsupported_link: 'I only play links from the usual media sites; give me the song name instead and I will find it.',
 	disabled: 'Music is turned off in this setup (.env: MUSIC=1).',

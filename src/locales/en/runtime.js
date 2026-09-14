@@ -13,6 +13,7 @@ export default {
 	window_shape_cumulative: '[transcript] the windows are cumulative: {straddled} of {total} fragments carried the previous one, so each is judged on the audio that is new since the last',
 	window_shape_per_fragment: '[transcript] the windows are per fragment: {straddled} of {total} overlapped the previous one',
 	speaker_line_unknown: 'Somebody in the channel said this and the audio does not say who: "{line}"',
+	log_no_audio_detail: '[transcript] no audio for {from}-{to} ms; the audio is at {audio} ms and the last thing heard ended at {lastEnd} ms',
 	log_context_unknown: '[context] no audio under these words: "{line}"',
 	log_context_overlap: '[context] two voices at once ({names}): "{line}"',
 	log_command_unclear: '[command] not run, the line is not safely one person: "{line}"',

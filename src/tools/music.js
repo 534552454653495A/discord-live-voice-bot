@@ -24,8 +24,17 @@ export const tools = [
 			const query = String(args.query ?? '').trim();
 			if (!query) return { ok: false, spoken: t('tools.music.no_query') };
 			try {
-				const { track, position, startedNow } = await deps.music.enqueue(query, { requestedBy: deps.currentSpeakerName?.() ?? null });
+				const { track, position, startedNow, duplicate } = await deps.music.enqueue(query, {
+					requestedBy: deps.currentSpeakerName?.() ?? null,
+				});
 				const label = `${track.title}${track.uploader ? ` — ${track.uploader}` : ''}`;
+				if (duplicate) {
+					return {
+						ok: true,
+						spoken: t('tools.music.already_queued', { title: track.title }),
+						data: { title: track.title, duplicate: true, position },
+					};
+				}
 				musicEvent(deps, startedNow ? t('tools.music.playing_event', { label }) : t('tools.music.queued_event', { position, label }), {
 					query,
 					source: track.kind,

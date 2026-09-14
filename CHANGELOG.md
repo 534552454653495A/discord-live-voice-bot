@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] — 2026-09-14
+
+### Fixed
+
+- **The bot's profile went on saying "listening to" after the music was stopped.** The only thing that
+  ever took that back off was a track ending; stopping cleared the queue and the player without telling
+  anybody. Stopping now reports the end the same way running out does, and says which of the two it was,
+  so the log does not claim a stopped track "finished".
+- **A track came back round on its own when it ended**, which from the outside looked like music that
+  would not stop. The model had answered one "change it" by both skipping to a song and queueing it, so
+  the queue held a second copy of what was already playing. A request for something already playing or
+  already waiting is now answered rather than added twice.
+
+### Added
+
+- **A line with no audio under it now says where it looked**: the stretch it wanted, where the audio has
+  got to, and where the last thing heard ended. Six times a session, which is enough to see the pattern.
+  This is the third round of this particular question and it will not be guessed at again.
+
 ## [1.10.1] — 2026-09-14
 
 ### Fixed

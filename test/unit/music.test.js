@@ -103,6 +103,40 @@ describe('MusicPlayer', () => {
 		assert.equal(player.readFrame(dst), 0);
 	});
 
+	// Seen live: the bot's profile kept saying "listening to Rammstein - Puppe" after the music was
+	// stopped, because the only thing that ever took it back off was a track ENDING.
+	it('reports the end of the music when it is stopped, not only when it runs out', async () => {
+		const dir = mkdtempSync(path.join(os.tmpdir(), 'music-'));
+		writeFileSync(path.join(dir, 'a.wav'), 'x');
+		const fake = fakeSpawn({ [path.join(dir, 'a.wav')]: pcmSeconds(1) });
+		const ends = [];
+		const player = new MusicPlayer({
+			musicDir: dir,
+			spawnImpl: fake.spawn,
+			log: () => {},
+			onTrackEnd: (track, info) => ends.push({ title: track.title, ...info }),
+		});
+		await player.enqueue('a');
+		await waitForFrame(player);
+		player.stop();
+		assert.deepEqual(ends, [{ title: 'a', queueEmpty: true, stopped: true }]);
+	});
+
+	// Seen live: the model answered "sure, changing it" by both skipping to a track AND queueing it, so
+	// the song came back round on its own when it finished and the music appeared never to end.
+	it('does not queue a second copy of what is already playing', async () => {
+		const dir = mkdtempSync(path.join(os.tmpdir(), 'music-'));
+		writeFileSync(path.join(dir, 'Puppe.mp3'), 'x');
+		const fake = fakeSpawn({ [path.join(dir, 'Puppe.mp3')]: pcmSeconds(1) });
+		const player = new MusicPlayer({ musicDir: dir, spawnImpl: fake.spawn, log: () => {} });
+		const first = await player.enqueue('puppe');
+		assert.equal(first.startedNow, true);
+		const again = await player.enqueue('puppe');
+		assert.equal(again.duplicate, true, 'the same track is not added twice');
+		assert.equal(player.state().queue.length, 0, 'and the queue is left alone');
+		player.stop();
+	});
+
 	it('pauses, resumes, clamps the volume and keeps the duck ratio relative to it', async () => {
 		const dir = mkdtempSync(path.join(os.tmpdir(), 'music-'));
 		writeFileSync(path.join(dir, 'a.wav'), 'x');
