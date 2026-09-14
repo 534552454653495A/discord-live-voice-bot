@@ -12,6 +12,7 @@ export default {
 	disconnected: 'Ses bağlantısı koptu (sebep: {reason}{code}).',
 	disconnect_code: ', kod: {code}',
 	player_error: 'oynatma hatası:',
+	output_renewed: 'bağlantı geri gelince ses çıkışı yeniden kuruldu',
 	stream_error: 'ses akışı hatası:',
 	receive_error: 'ses alım hatası',
 	opus_decode_error: 'opus çözme hatası',

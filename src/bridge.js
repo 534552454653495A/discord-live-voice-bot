@@ -58,6 +58,17 @@ export class AudioBridge {
 		return this.timer !== null;
 	}
 
+	/**
+	 * Point at a fresh output. The old one is gone -- a voice reconnect destroys it -- and everything the
+	 * bridge remembered about it (that it was blocked, how much had been dropped while it was) belongs to
+	 * that dead stream, not to this one.
+	 */
+	setOutput(output) {
+		this.output = output;
+		this.backpressure = false;
+		this.dropRun = 0;
+	}
+
 	/** Runs exactly one 20 ms step. Returns what happened (used by tests). */
 	tick() {
 		const { pcm, active, present, priority } = this.mixer.tick();

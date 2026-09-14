@@ -185,8 +185,12 @@ export class VoiceSession {
 				// Pushing audio into a broken transport after a drop produces robotic/choppy sound; pause the
 				// stream and start it again if the connection comes back.
 				this.bridge?.stop();
-			} else if (newState.status === VoiceConnectionStatus.Ready && this.bridge && !this.bridge.running) {
-				this.bridge.start();
+			} else if (newState.status === VoiceConnectionStatus.Ready) {
+				// A drop destroys the stream the player was reading from, and a destroyed stream never plays
+				// again: the bot came back to the channel and stayed silent for the rest of the session while
+				// everything upstream kept reporting success. Coming back means building a new one.
+				if (this.pcmStream?.destroyed) this.renewOutput();
+				if (this.bridge && !this.bridge.running) this.bridge.start();
 			}
 		});
 		connection.on('error', (err) => {
@@ -207,14 +211,15 @@ export class VoiceSession {
 		});
 
 		this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-		this.player.on('error', (err) => this.log(t('voice.player_error'), err.message));
+		this.player.on('error', (err) => {
+			this.log(t('voice.player_error'), err.message);
+			this.renewOutput();
+		});
 		// A 20 ms stereo frame is 3840 bytes, so the stream's default 16 KB cushion is about 85 ms: one
 		// garbage collection or one slow tick of the event loop overflows it, and an overflowing output
 		// drops the bot's own speech rather than delaying it. 64 KB is around a third of a second, enough
 		// to ride out a hiccup while still far too small to let stale audio pile up behind a real stall.
-		this.pcmStream = new PassThrough({ highWaterMark: 64 * 1024 });
-		this.pcmStream.on('error', (err) => this.log(t('voice.stream_error'), err.message));
-		this.player.play(createAudioResource(this.pcmStream, { inputType: StreamType.Raw }));
+		this.buildOutput();
 		connection.subscribe(this.player);
 
 		connection.receiver.speaking.on('start', (userId) => {
@@ -236,6 +241,47 @@ export class VoiceSession {
 			onFrame: this.onFrame,
 		});
 		this.bridge.start();
+	}
+
+	/**
+	 * The stream the player reads the bot's own voice from. Built when the connection is made and built
+	 * again whenever it dies, because a PassThrough that has errored or been destroyed is finished: every
+	 * later write disappears and the channel hears nothing at all.
+	 */
+	buildOutput() {
+		// A 20 ms stereo frame is 3840 bytes, so the stream's default 16 KB cushion is about 85 ms: one
+		// garbage collection or one slow tick of the event loop overflows it, and an overflowing output
+		// drops the bot's own speech rather than delaying it. 64 KB is around a third of a second, enough
+		// to ride out a hiccup while still far too small to let stale audio pile up behind a real stall.
+		const stream = new PassThrough({ highWaterMark: 64 * 1024 });
+		stream.on('error', (err) => {
+			this.log(t('voice.stream_error'), err.message);
+			// The error is the end of this stream, so the answer is another one rather than a log line.
+			if (this.pcmStream === stream) this.renewOutput();
+		});
+		this.pcmStream = stream;
+		this.player.play(createAudioResource(stream, { inputType: StreamType.Raw }));
+		return stream;
+	}
+
+	/** Replace a dead output with a live one, at most once a second so a storm cannot spin. */
+	renewOutput() {
+		if (!this.connection || !this.player) return;
+		const now = Date.now();
+		if (now - (this.lastRenewAt ?? 0) < 1000) return;
+		this.lastRenewAt = now;
+		const old = this.pcmStream;
+		this.buildOutput();
+		this.bridge?.setOutput(this.pcmStream);
+		this.connection.subscribe(this.player);
+		if (old && !old.destroyed) {
+			try {
+				old.destroy();
+			} catch {
+				/* ignore */
+			}
+		}
+		this.log(t('voice.output_renewed'));
 	}
 
 	ensureSubscription(userId) {

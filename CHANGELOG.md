@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.1] — 2026-09-15
+
+### Fixed
+
+- **The bot went permanently silent after a voice reconnect.** The connection dropped with close code
+  4014, came back a second later, and nothing was heard again for the rest of the session while
+  transcription and speech generation both kept reporting success. The stream the player reads the bot's
+  voice from is destroyed by the drop, and a destroyed stream never plays again: every later write
+  disappeared into it. It is now rebuilt whenever it dies, whether that shows up as a stream error, a
+  player error, or the connection returning to ready with the old one already gone. Rebuilding is limited
+  to once a second so a failing output cannot spin.
+
 ## [1.14.0] — 2026-09-15
 
 ### Changed

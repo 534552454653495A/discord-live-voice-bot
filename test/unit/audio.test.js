@@ -219,6 +219,41 @@ describe('AudioBridge', () => {
 		assert.deepEqual(results, [true, true, true, true, true, false], 'the 5th frame is partial but still played');
 	});
 
+	// Live failure: the voice connection dropped with code 4014, came back a second later, and the bot was
+	// silent for the rest of the session while transcription and speech generation both kept reporting
+	// success. A PassThrough that has errored is finished; every later write disappears.
+	it('writes to a replacement output after the old one dies', () => {
+		const first = sink();
+		const playback = new PlaybackQueue();
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback, output: first.out, getLive: () => null });
+		playback.push(new Int16Array(SAMPLES_PER_FRAME_24K * 4).fill(500));
+		bridge.tick();
+		assert.equal(first.written.length, 1);
+
+		const second = sink();
+		bridge.setOutput(second.out);
+		bridge.tick();
+		assert.equal(first.written.length, 1, 'nothing more goes to the dead stream');
+		assert.equal(second.written.length, 1, 'and the new one is spoken to');
+	});
+
+	it('forgets that the old output was blocked when it is replaced', async () => {
+		const blocked = new Writable({
+			highWaterMark: 1,
+			write(_chunk, _enc, cb) {
+				setTimeout(cb, 50);
+			},
+		});
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: blocked, getLive: () => null });
+		bridge.tick(); // fills the queue
+		assert.equal(bridge.tick().dropped, 1, 'the old stream is blocked');
+		const fresh = sink();
+		bridge.setOutput(fresh.out);
+		bridge.tick();
+		assert.equal(fresh.written.length, 1, 'the block belonged to the stream that is gone');
+		bridge.stop();
+	});
+
 	it('does not burst through ticks after a long pause', () => {
 		const { out } = sink();
 		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: out, getLive: () => null });

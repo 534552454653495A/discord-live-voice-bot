@@ -12,6 +12,7 @@ export default {
 	disconnected: 'The voice connection dropped (reason: {reason}{code}).',
 	disconnect_code: ', code: {code}',
 	player_error: 'playback error:',
+	output_renewed: 'the audio output was rebuilt after the connection came back',
 	stream_error: 'audio stream error:',
 	receive_error: 'audio receive error',
 	opus_decode_error: 'opus decode error',
