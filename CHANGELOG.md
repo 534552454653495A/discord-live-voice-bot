@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1] — 2026-09-14
+
+### Changed
+
+- **The debug log no longer prints the streaming chunks.** With `DEBUG=1` every realtime event was
+  printed, including the audio and transcript deltas that arrive many times a second, which buried the
+  lines somebody turned the log on to read. Everything that happens once still appears: the session
+  opening, a tool call, an error.
+
 ## [1.13.0] — 2026-09-14
 
 ### Added

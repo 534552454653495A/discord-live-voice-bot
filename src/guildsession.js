@@ -1051,7 +1051,16 @@ export class GuildSession {
 			}
 		});
 		session.on('warning', (message) => this.log(t('runtime.live_warning', { message })));
-		if (cfg.debug) session.on('debug', (event) => this.log('live>', event.type));
+		// Every realtime event, minus the streaming ones. A ".delta" is a chunk of audio or of a sentence
+		// and arrives many times a second: printing those buries the lines somebody turned the debug log on
+		// to read. Everything that happens once -- the session opening, a tool call, an error -- stays.
+		if (cfg.debug) {
+			session.on('debug', (event) => {
+				const type = String(event?.type ?? '');
+				if (type.endsWith('.delta')) return;
+				this.log('live>', type);
+			});
+		}
 
 		session.on('closed', ({ code, reason, expected }) => {
 			if (this.live !== session) return;
