@@ -33,6 +33,24 @@ export const resetDmLimiter = () => dmLimiter.reset();
  * find one by name; when the request is about a private conversation we look it up by person, or fall
  * back to the last DM the bot sent, which is what "I wrote to the wrong person, delete it" means.
  */
+/**
+ * What to call this channel out loud and in the log. A private conversation has no `name`, so every
+ * message about one came out as a literal "#{channel}" with the placeholder still in it.
+ */
+function channelLabel(channel) {
+	if (!channel) return '';
+	if (channel.name) return channel.name;
+	const who = channel.recipient?.displayName ?? channel.recipient?.username ?? null;
+	return who ? t('tools.messaging.dm_with', { who }) : t('tools.messaging.dm_label');
+}
+
+/** A real Discord id, so that an id the model invented cannot silently turn into "no messages". */
+const looksLikeId = (value) => /^\d{17,20}$/.test(String(value ?? '').trim());
+
+function isDirect(channel) {
+	return Boolean(channel) && !channel.name;
+}
+
 async function resolveMessageChannel(deps, { channel, dm }) {
 	if (channel) {
 		const named = resolveTextChannel(deps, channel);
@@ -175,50 +193,58 @@ export const tools = [
 			const channel = await resolveMessageChannel(deps, { channel: args.channel, dm: args.dm });
 			if (!channel) return { ok: false, spoken: t('tools.messaging.no_read_channel') };
 			const count = Number.isFinite(Number(args.count)) && Number(args.count) > 0 ? Number(args.count) : deps.cfg.readLimit;
+			const label = channelLabel(channel);
+			// An id the model made up reads as "there is nothing older", which is a lie about the channel
+			// rather than about the id. Only a real one is passed on.
+			const before = looksLikeId(args.before) ? String(args.before).trim() : null;
+			// "Read our DM" means the latest of it. A private conversation has no baseline taken at startup,
+			// and after one read the new-messages-only path answers "nothing new" to somebody who is pointing
+			// at a message they can see on their own screen.
+			const wantsLatest = args.all === true || isDirect(channel);
 			try {
-				if (args.all === true) {
-					const { messages, oldestId } = await deps.reader.readHistory(channel, { limit: count, before: args.before ? String(args.before) : null });
+				if (wantsLatest) {
+					const { messages, oldestId } = await deps.reader.readHistory(channel, { limit: count, before });
 					deps.log?.(
 						t('tools.messaging.log_history', {
-							channel: channel.name,
+							channel: label,
 							count: messages.length,
-							more: args.before ? t('tools.messaging.log_history_older') : '',
+							more: before ? t('tools.messaging.log_history_older') : '',
 						}),
 					);
 					const spoken = messages.length
-						? formatMessages(messages, channel.name)
-						: args.before
-							? t('tools.messaging.no_older_messages', { channel: channel.name })
-							: t('tools.messaging.no_messages', { channel: channel.name });
-					return { ok: true, spoken, data: { channel: `#${channel.name}`, count: messages.length, all: true, oldest_id: oldestId } };
+						? formatMessages(messages, label)
+						: before
+							? t('tools.messaging.no_older_messages', { channel: label })
+							: t('tools.messaging.no_messages', { channel: label });
+					return { ok: true, spoken, data: { channel: label, count: messages.length, all: true, oldest_id: oldestId } };
 				}
 				const { messages, isNew, firstTime } = await deps.reader.read(channel, count);
 				if (!messages.length) {
-					deps.log?.(t('tools.messaging.log_read_none', { channel: channel.name }));
+					deps.log?.(t('tools.messaging.log_read_none', { channel: label }));
 					return {
 						ok: true,
-						spoken: t('tools.messaging.no_new_messages', { channel: channel.name }),
-						data: { channel: `#${channel.name}`, count: 0, new: false, first_time: firstTime, hint: 'all:true for older messages' },
+						spoken: t('tools.messaging.no_new_messages', { channel: label }),
+						data: { channel: label, count: 0, new: false, first_time: firstTime, hint: 'all:true for older messages' },
 					};
 				}
 				const hidden = messages.filter((m) => !m.author?.bot && !String(m.content ?? '').trim()).length;
 				const hint = hidden > 0 ? t('tools.messaging.empty_content_hint') : null;
 				deps.log?.(
 					t('tools.messaging.log_read', {
-						channel: channel.name,
+						channel: label,
 						count: messages.length,
 						fresh: isNew ? t('tools.messaging.log_read_new') : '',
 					}),
 				);
-				const spoken = formatMessages(messages, channel.name, { emptyHint: hint });
+				const spoken = formatMessages(messages, label, { emptyHint: hint });
 				return {
 					ok: true,
 					spoken: hint && messages.length ? `${spoken} ${hint}` : spoken,
-					data: { channel: `#${channel.name}`, count: messages.length, new: isNew, first_time: firstTime },
+					data: { channel: label, count: messages.length, new: isNew, first_time: firstTime },
 					warnings: hint ? [hint] : [],
 				};
 			} catch (err) {
-				return failure(deps, `read failed (#${channel.name})`, err, t('tools.messaging.read_failed', { channel: channel.name }));
+				return failure(deps, `read failed (${label})`, err, t('tools.messaging.read_failed', { channel: label }));
 			}
 		},
 	}),

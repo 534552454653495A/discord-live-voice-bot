@@ -859,6 +859,19 @@ await checkAsync('read_messages: reads the private conversation the bot was last
 	const result = await callTool('read_messages', { dm: 'last' }, deps);
 	assert.equal(result.ok, true, result.spoken);
 	assert.ok(result.spoken.includes('here is the invite'), result.spoken);
+	// A conversation has no channel NAME, and every sentence about one used to come out with the
+	// placeholder still in it: "#{channel} history read: 1 messages".
+	assert.ok(!result.spoken.includes('{channel}'), `the conversation needs a name of its own: ${result.spoken}`);
+	assert.equal(result.data.channel.includes('{'), false, result.data.channel);
+
+	// Asked again, it gives the latest again. The new-messages-only path would answer "nothing new" to
+	// somebody pointing at a message they can see on their own screen.
+	const again = await callTool('read_messages', { dm: 'last' }, deps);
+	assert.ok(again.spoken.includes('here is the invite'), `a second read still shows the latest: ${again.spoken}`);
+
+	// An id the model invented must not read as "there is nothing older".
+	const bogus = await callTool('read_messages', { dm: 'last', all: true, before: 'the last one' }, deps);
+	assert.ok(bogus.spoken.includes('here is the invite'), `an invented id is ignored, not obeyed: ${bogus.spoken}`);
 });
 
 await checkAsync('read_messages: warns when the message content is hidden (intent off)', async () => {

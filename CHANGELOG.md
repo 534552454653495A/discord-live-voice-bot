@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.1] — 2026-09-14
+
+### Fixed
+
+- **A private conversation now has a name.** It has no channel name, and every sentence about one came
+  out with the placeholder still in it: "#{channel} history read: 10 messages". It is called after the
+  person it is with.
+- **Asked for a private conversation, the bot gives its latest messages.** The new-messages-only path
+  makes no sense there: there is no baseline taken at startup, and after one read it answers "nothing
+  new" to somebody pointing at a message they can see on their own screen.
+- **An invented message id is ignored rather than obeyed.** The model passed one on the first read and
+  the answer came back as "there are no messages", which is a lie about the conversation rather than
+  about the id. Only something shaped like a real id is passed on.
+
 ## [1.11.0] — 2026-09-14
 
 ### Added
