@@ -176,6 +176,9 @@ export function loadConfig(env = process.env) {
 		announceSpeaker: bool(env.ANNOUNCE_SPEAKER, true),
 		transcripts: bool(env.TRANSCRIPTS, true),
 		debug: bool(env.DEBUG, false),
+		// The realtime protocol's own events, separately: DEBUG is for understanding what the bot decided,
+		// and the event stream is a different question that drowns it out at several lines a second.
+		debugLive: bool(env.DEBUG_LIVE, false),
 		idleCloseMs: num(env.IDLE_CLOSE_MINUTES, 10, { min: 0 }) * 60_000,
 
 		// Cost: daily GPT-Live quota in seconds (0 = unlimited). Once it is used up the session stays closed until the next day.
