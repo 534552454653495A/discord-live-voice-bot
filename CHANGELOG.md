@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.2] — 2026-09-14
+
+### Changed
+
+- **The debug log answers the question people actually ask.** It used to print the audio position and
+  whether the owner had spoken. With `DEBUG=1` it now says, for every transcript fragment, which stretch
+  it was judged on, who the audio puts there, how sure that is and why, how much of it that person held
+  alone, and everybody who was heard in it. Each finished line then gets its own line saying who it was
+  given to, whether it was mixed, and who the candidates were. That is exactly the evidence needed to
+  answer "it says the line is not one person's, but it was".
+
+### Fixed
+
+- **"What are my roles" failed.** The model calls member_roles with an empty name for that, and looking
+  up an empty string failed with "I could not find anyone called ''". Empty now means the person
+  speaking, as it already did for user_info.
+
 ## [1.12.1] — 2026-09-14
 
 ### Fixed

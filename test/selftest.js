@@ -843,6 +843,22 @@ await checkAsync('read_messages: the first read returns the last messages, later
 // Live failure: "read the DM I just sent you" came back as "I could not tell which channel to read".
 // This was the only tool in the messaging family that could not look at a private conversation, while
 // the bot was perfectly able to send one.
+// "What are my roles" arrives with an empty name; looking up an empty string used to fail with
+// "I could not find anyone called ''".
+await checkAsync('member_roles: an empty name means whoever is speaking', async () => {
+	const { deps, guild } = makeToolDeps();
+	guild.members.cache.set('7', {
+		id: '7',
+		displayName: 'Kaan',
+		user: { username: 'kaan', bot: false },
+		roles: { cache: new Map([['r1', { name: 'Chillz', position: 2 }]]) },
+	});
+	deps.currentSpeakerId = () => '7';
+	const result = await callTool('member_roles', {}, deps);
+	assert.equal(result.ok, true, result.spoken);
+	assert.deepEqual(result.data.roles, ['Chillz']);
+});
+
 await checkAsync('read_messages: reads the private conversation the bot was last in', async () => {
 	const dmMessages = new Map([
 		[9, { id: 9, createdTimestamp: 9, content: 'here is the invite', author: { bot: false, displayName: 'Kaan' }, stickers: new Map(), attachments: new Map(), embeds: [] }],

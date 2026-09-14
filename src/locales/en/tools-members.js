@@ -3,6 +3,7 @@ export default {
 	disconnected: 'I disconnected {who} from {channel}. They are still in the server.',
 	disconnect_failed: 'I could not disconnect them from the voice channel',
 	log_disconnected: '[tool] {who} disconnected from voice ({channel})',
+	you: 'you',
 	member_not_found: 'I could not find anyone called "{name}".',
 	that_person: 'That person',
 	none: 'none',

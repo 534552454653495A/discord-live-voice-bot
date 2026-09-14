@@ -119,11 +119,14 @@ export const tools = [
 
 	defineTool({
 		name: 'member_roles',
-		description: 'Lists a member\'s roles.',
-		parameters: P.obj({ member: P.str('Person name') }, ['member']),
+		description: 'Lists a member\'s roles. Leave member empty for whoever is speaking ("what are my roles").',
+		parameters: P.obj({ member: P.str('Person name; empty = the current speaker') }),
 		async handler(args, deps) {
-			const member = await findMember(deps, String(args.member ?? ''));
-			if (!member) return { ok: false, spoken: t('tools.members.member_not_found', { name: args.member }) };
+			// "What are my roles" arrives with an empty name, and looking up an empty string failed with
+			// "I could not find anyone called ''". Empty means the person talking, as it does for user_info.
+			const asked = String(args.member ?? '').trim();
+			const member = asked ? await findMember(deps, asked) : await findMember(deps, String(deps.currentSpeakerId?.() ?? ''));
+			if (!member) return { ok: false, spoken: t('tools.members.member_not_found', { name: asked || t('tools.members.you') }) };
 			const roles = [...(member.roles?.cache?.values() ?? [])]
 				.filter((role) => role.name !== '@everyone')
 				.sort((a, b) => (b.position ?? 0) - (a.position ?? 0))

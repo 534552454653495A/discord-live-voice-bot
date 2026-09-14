@@ -1239,14 +1239,19 @@ export class GuildSession {
 			const lag = Number.isFinite(endMs) ? Math.max(0, this.attribution.audioMs - endMs) : 0;
 			this.latency.userSpeechEnd(Date.now() - lag);
 			if (cfg.debug) {
-				const st = this.attribution.state();
+				// What the question actually is, when somebody asks why a line was refused: which stretch of
+				// audio this fragment was judged on, who the audio says was in it, and how sure that is.
 				this.log(
 					t('runtime.log_attribution', {
-						start: startMs,
-						end: endMs,
-						audio: this.attribution.audioMs,
-						ownerActive: st.ownerActive,
-						ownerText: st.ownerText,
+						start: Math.round(Number(startMs) || 0),
+						end: Math.round(Number(endMs) || 0),
+						audio: Math.round(this.attribution.audioMs),
+						who: hit?.id ? this.speakerLabel(hit.id) : '-',
+						confidence: hit?.confidence ?? '-',
+						reason: hit?.reason ?? '-',
+						solo: hit ? Math.round(hit.solo * 100) : 0,
+						ids: hit?.ids?.length ? hit.ids.map((id) => this.speakerLabel(id)).join(', ') : '-',
+						text: String(text ?? '').slice(0, 30),
 					}),
 				);
 			}
@@ -1334,6 +1339,16 @@ export class GuildSession {
 
 		for (const item of lines) {
 			if (cfg.transcripts) this.log(t('runtime.transcript_in', { line: item.line }));
+			if (cfg.debug) {
+				this.log(
+					t('runtime.log_line_decision', {
+						who: item.id ? this.speakerLabel(item.id) : '-',
+						mixed: item.mixed ? t('runtime.yes') : t('runtime.no'),
+						candidates: item.candidates.length ? item.candidates.map((id) => this.speakerLabel(id)).join(', ') : '-',
+						line: item.line.slice(0, 40),
+					}),
+				);
+			}
 			this.record({
 				kind: 'voice',
 				direction: 'in',
