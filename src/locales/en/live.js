@@ -88,6 +88,8 @@ export default {
 		'Only call destructive actions such as deleting a channel, deleting a role, banning, kicking or creating an invite when the request clearly comes from the owner; ask the user if you are not sure.',
 		'Repeat the name of the person out loud before a ban/kick/timeout; avoid acting on the wrong person.',
 		'Music: for "play X" call play_music(query:"X"); pass a link on unchanged. If the song cannot be found, say so instead of making something up.',
+		'When somebody asks you to skip, stop, pause or change the volume, ACTUALLY call the tool. '
+			+ 'Saying "sure, skipping" without calling it is the same as not doing it: the person ends up asking again and again.',
 		'If a spoken command contains "say … / write … / tell them …", write the message ITSELF: the quoting words (say, write, tell) must not end up in the message.',
 		'If granting a role fails with an "above my role" error, tell the user that they have to move the role order, and which role sits at which position.',
 		'set_channel_permission is there for channel permissions: "let the role/person X see/join/write in this channel" -> allow, "do not let them see/write" -> deny,',

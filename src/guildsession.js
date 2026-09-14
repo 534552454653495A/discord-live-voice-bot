@@ -76,6 +76,12 @@ const LINE_HARD_MAX_MS = 12_000;
 const PARTS_MAX = 2000; // insurance against a pathological delta rate; bounds the buffer's memory
 // How many transcript fragments to watch before saying which shape their time windows arrive in.
 const WINDOW_SHAPE_SAMPLE = 24;
+// Voice commands that change nothing outside the bot's own playback or ask it a question. These may run
+// off a line that is only MOSTLY one person's, because the worst case is the wrong song. Everything else
+// -- posting a message, changing the persona, the privacy setting, moving the bot between channels --
+// needs a line that is provably one person's, because the worst case there is somebody else's words
+// acting under a name that is not theirs.
+const HARMLESS_VOICE_ACTIONS = new Set(['music', 'read', 'status', 'help', 'panel', 'summary']);
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -1382,18 +1388,24 @@ export class GuildSession {
 		return { at: Date.now(), audioMs: Number.isFinite(item.endMs) ? item.endMs : this.attribution.audioMs };
 	}
 
-	/** A finished line may run a voice command. A line that is not provably one person's may not. */
+	/**
+	 * A finished line may run a voice command. How clean the line has to be depends on what the command
+	 * would do.
+	 *
+	 * This path bypasses the model, so for a tool with no gate there is no second check anywhere, and on a
+	 * mixed line one person's word can finish another's sentence. But refusing every mixed line took the
+	 * music controls away from a lively channel entirely: "skip the queue", asked four times in a row, was
+	 * answered four times and never done. The worst case of a mixed "skip" is the wrong song, so the rule
+	 * follows the consequence rather than treating every command as if it were a ban.
+	 */
 	runVoiceCommand(item) {
-		// parseVoiceCommand matches whole-line patterns and does not care who spoke, so on a mixed line one
-		// person's word can finish another's command -- and this path bypasses the model entirely, which
-		// means for an ungated tool there is no second check anywhere. The model still sees the line in its
-		// context and can call the tool itself, where the owner gate applies.
-		if (!item.id || item.mixed) {
+		const refuse = () => {
 			if (this.cfg.transcripts && item.line) this.log(t('runtime.log_command_unclear', { line: item.line.slice(0, 40) }));
-			return;
-		}
+		};
+		if (!item.id) return refuse();
 		const command = parseVoiceCommand(item.line, this.store.list(), this.channelLists());
 		if (!command) return;
+		if (item.mixed && !HARMLESS_VOICE_ACTIONS.has(command.type)) return refuse();
 		const lineTurn = this.lineTurn(item);
 		const speakerId = String(item.id);
 		void executeAction(command, {

@@ -215,24 +215,48 @@ describe('who the model is told said a line', () => {
 		assert.equal(room.session.lastAnnouncedUser, 'guest', 'the model was told no name, so none has been remembered');
 	});
 
-	it('refuses to run a command off a line that is only mostly one person s', (t) => {
+	// How clean a line has to be depends on what the command would do. Refusing every mixed line took the
+	// music controls away from a lively channel: "skip the queue", asked four times in a row, was answered
+	// four times and never done. The worst case of a mixed "skip" is the wrong song.
+	it('weighs a mixed line against what the command would actually do', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
 		// 600 ms alone then 800 ms shared: the owner holds three sevenths of it on their own, which is
 		// enough to be the likeliest voice and not enough to be the only one.
 		room.voices('owner', 30);
 		room.voices(['owner', 'guest'], 40);
-		room.delta('melisi banla', 0, 1400);
+		room.delta('skip the song', 0, 1400);
 		t.mock.timers.tick(1300);
 
 		const item = room.commanded.at(-1);
 		assert.equal(item.id, 'owner', 'the line still carries the likeliest name');
 		assert.equal(item.mixed, true);
+
 		const before = room.logged.length;
 		GuildSession.prototype.runVoiceCommand.call(room.session, item);
+		assert.equal(
+			room.logged.slice(before).filter((line) => /not run/.test(line)).length,
+			0,
+			'a mixed line may still skip a song',
+		);
+
+		// The same line, a command that changes something outside the bot's own playback.
+		const after = room.logged.length;
+		GuildSession.prototype.runVoiceCommand.call(room.session, { ...item, line: 'leave the channel' });
+		assert.ok(
+			room.logged.slice(after).some((line) => /not run/.test(line)),
+			'and may not move the bot out of the channel',
+		);
+	});
+
+	it('runs nothing at all off a line nobody owns', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		const before = room.logged.length;
+		GuildSession.prototype.runVoiceCommand.call(room.session, { line: 'skip the song', id: null, mixed: true, endMs: 100, candidates: [] });
 		assert.ok(
 			room.logged.slice(before).some((line) => /not run/.test(line)),
-			'and the real guard refuses it because the line is mixed, not because it has no name',
+			'no name, no command, however harmless',
 		);
 	});
 

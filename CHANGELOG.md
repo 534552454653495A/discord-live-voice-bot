@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] — 2026-09-14
+
+### Fixed
+
+- **"Skip the queue", asked four times in a row, was answered four times and never done.** The voice
+  command shortcut refused every line that was not provably one person's, which in a lively channel is
+  most of them, and music is what that shortcut is mostly used for. How clean a line has to be now follows
+  what the command would do: playback and read-only requests may run off a line that is only mostly one
+  person's, because the worst case is the wrong song. Posting a message, changing the persona or the
+  privacy setting, and moving the bot between channels still need a line that is provably one person's,
+  because there the worst case is somebody else's words acting under a name that is not theirs. A line
+  nobody owns at all still runs nothing.
+- **The model was told to actually call the tool** when somebody asks it to skip, stop, pause or change
+  the volume. It had taken to saying "sure, skipping" without calling anything, which is the same as not
+  doing it.
+
 ## [1.10.0] — 2026-09-14
 
 ### Fixed

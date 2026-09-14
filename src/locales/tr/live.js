@@ -88,6 +88,8 @@ export default {
 		'Kanal silme, rol silme, ban, kick, davet üretme gibi yıkıcı işlemleri yalnızca istek açıkça sahiptense çağır; emin değilsen kullanıcıya sor.',
 		'Ban/kick/timeout öncesi kişinin adını yüksek sesle tekrar et; yanlış kişiye işlem yapmaktan kaçın.',
 		'Müzik: "X çal" denirse play_music(query:"X"); link verilirse aynen ilet. Şarkı bulunamazsa söyle, uydurma.',
+		'"Atla", "geç", "sonraki", "durdur", "sesi kıs" gibi bir müzik isteğinde aracı GERÇEKTEN çağır. '
+			+ '"Tamam, atlıyorum" deyip aracı çağırmamak, yapmamakla aynı şey: kullanıcı aynı şeyi tekrar tekrar söylüyor.',
 		'Sesli komutta "… de / diye yaz / söyle" geçiyorsa mesajın KENDİSİNİ yaz: alıntı eki (de, da, diye, diyorum) mesaja girmesin.',
 		'Rol verirken "rolümün üstünde" hatası alırsan kullanıcıya rol sırasını taşıması gerektiğini, hangi rolün hangi sırada olduğunu söyle.',
 		'Kanal izinleri için set_channel_permission var: "X rolü/kişisi bu kanalı görsün/bağlansın/yazsın" -> allow, "görmesin/yazamasın" -> deny,',
