@@ -16,12 +16,20 @@ import { SAMPLES_PER_FRAME_24K, SpeakerMixer } from '../../src/audio.js';
 
 const ENV = { DISCORD_TOKEN: 't', GUILD_ID: 'g', CHANNEL_ID: 'g-voice', OPENAI_API_KEY: 'k', OWNER_ID: 'owner' };
 
+// The accounts behind the display names, so that a test can make two people share a name.
+const ACCOUNTS = { owner: 'serefsiz', guest: 'pompomlatte', third: 'itsbluzerxs' };
+
 function makeRoom(names = { owner: 'Kaan', guest: 'Adem', third: 'Melis' }) {
 	const voice = { id: 'g-voice', name: 'Lounge', type: ChannelType.GuildVoice, parent: null, parentId: null, rawPosition: 0 };
 	const members = new Map(
 		Object.entries(names).map(([id, displayName]) => [
 			id,
-			{ id, displayName, user: { id, username: displayName.toLowerCase(), bot: false }, voice: { channelId: voice.id, channel: voice } },
+			{
+				id,
+				displayName,
+				user: { id, username: ACCOUNTS[id] ?? displayName.toLowerCase(), bot: false },
+				voice: { channelId: voice.id, channel: voice },
+			},
 		]),
 	);
 	return {
@@ -38,7 +46,7 @@ function makeRoom(names = { owner: 'Kaan', guest: 'Adem', third: 'Melis' }) {
  * A session with a fake realtime socket: everything the model would be told is collected instead of
  * being sent. The audio path is real (SpeakerMixer -> SpeakerAttribution).
  */
-function makeRoomSession(env = {}) {
+function makeRoomSession({ names, ...env } = {}) {
 	const activity = new ActivityLog();
 	const told = [];
 	const logged = [];
@@ -46,7 +54,7 @@ function makeRoomSession(env = {}) {
 	const session = new GuildSession({
 		cfg,
 		client: { user: { id: 'bot' } },
-		guild: makeRoom(),
+		guild: names ? makeRoom(names) : makeRoom(),
 		channelId: 'g-voice',
 		store: { getActive: () => null, list: () => [], setActive: async () => true },
 		memory: null,
@@ -97,6 +105,28 @@ function makeRoomSession(env = {}) {
 	const flush = () => session.flushTranscript('user');
 	return { session, cfg, told, logged, voices, quiet, at, delta, flush, lines, spoken, commanded, activity };
 }
+
+describe('two people with the same display name', () => {
+	// Seen live: the owner and somebody else both showed as the same word, so "X said this" identified
+	// nobody and the model had no way to question it.
+	it('says which account it was, and only where the name really clashes', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ names: { owner: 'absolutely livid', guest: 'absolutely livid', third: 'itsbluzer' } });
+		// channelId is read off the live connection; the session is built without one here.
+		room.session.voice.connection = { joinConfig: { channelId: 'g-voice' } };
+		for (const id of ['owner', 'guest', 'third']) {
+			room.session.guild.voiceStates.cache.set(id, { id, channelId: 'g-voice', member: room.session.guild.members.cache.get(id) });
+		}
+		assert.match(room.session.speakerLabel('owner'), /serefsiz/, 'the clashing name carries its account');
+		assert.match(room.session.speakerLabel('guest'), /pompomlatte/);
+		assert.equal(room.session.speakerLabel('third'), 'itsbluzer', 'a name nobody shares is left alone');
+
+		room.voices('guest', 40);
+		room.delta('ben soyledim', 0, 800);
+		t.mock.timers.tick(1300);
+		assert.match(room.lines().join(' '), /pompomlatte/, 'and the model is told which one spoke');
+	});
+});
 
 describe('who the model is told said a line', () => {
 	it('puts one speaker on their own line', (t) => {

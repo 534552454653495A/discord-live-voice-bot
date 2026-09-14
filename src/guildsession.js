@@ -1373,13 +1373,13 @@ export class GuildSession {
 			// Two voices ran into each other here. Naming one of them would be a guess, and the assistant acts
 			// on these lines, so it is the expensive kind of guess.
 			const names = candidates.length
-				? candidates.map((candidate) => safeContext(this.nameFor(candidate))).join(t('runtime.name_join'))
+				? candidates.map((candidate) => safeContext(this.speakerLabel(candidate))).join(t('runtime.name_join'))
 				: t('runtime.someone');
 			this.live.appendContext('thinking', t('runtime.speaker_line_overlap', { names, line: clipped }));
 			if (this.cfg.transcripts) this.log(t('runtime.log_context_overlap', { line: line.slice(0, 40) }));
 			return; // lastAnnouncedUser is deliberately NOT touched: the model was told no name
 		}
-		const name = safeContext(this.nameFor(id));
+		const name = safeContext(this.speakerLabel(id));
 		const contradicts = this.lastAnnouncedUser && String(id) !== String(this.lastAnnouncedUser);
 		this.lastAnnouncedUser = String(id);
 		// "thinking", not "instructions": this carries somebody's words, and words spoken in the channel
@@ -1474,7 +1474,8 @@ export class GuildSession {
 	async announceSpeaker(userId) {
 		if (!this.live?.ready || this.lastAnnouncedUser === userId) return;
 		this.lastAnnouncedUser = userId;
-		const name = safeContext(await this.memberName(userId));
+		await this.memberName(userId); // makes sure the member is in the cache before the name is read
+		const name = safeContext(this.speakerLabel(userId));
 		const owner = this.isOwnerId(userId);
 		// An "instructions" note: the model takes it as hard fact ("thinking" notes are too weak in conversation).
 		const lines = [
@@ -1535,6 +1536,36 @@ export class GuildSession {
 		}
 	}
 
+	/**
+	 * The name to tell the model, or to write in the log, when saying who spoke.
+	 *
+	 * Two people in one channel really can carry the same display name -- seen live, with the owner and
+	 * somebody else both showing as the same word. The name then identifies nobody, and every "X said
+	 * this" note is a coin toss the model has no way to question. Where that happens the account name
+	 * goes with it; everywhere else the name is left alone, because a name plus an account for a room of
+	 * strangers reads like a database dump.
+	 */
+	speakerLabel(userId) {
+		const name = this.nameFor(userId);
+		if (!name || !this.guild) return name;
+		const key = normalize(name);
+		if (!key) return name;
+		let clash = false;
+		for (const state of this.guild.voiceStates.cache.values()) {
+			if (state.channelId !== this.voice.channelId) continue;
+			if (String(state.id) === String(userId)) continue;
+			const member = state.member ?? this.guild.members.cache.get(state.id);
+			if (!member || member.user?.bot) continue;
+			if (normalize(member.displayName) === key) {
+				clash = true;
+				break;
+			}
+		}
+		if (!clash) return name;
+		const account = this.guild.members.cache.get(String(userId))?.user?.username;
+		return account ? t('runtime.name_with_account', { name, account }) : name;
+	}
+
 	/** Tells the model who is in the channel (when the session opens and on joins/leaves). */
 	announceRoster(prefix = t('runtime.roster_prefix')) {
 		if (!this.live?.ready || !this.voice.channelId || !this.guild) return;
@@ -1543,7 +1574,7 @@ export class GuildSession {
 			if (state.channelId !== this.voice.channelId) continue;
 			const member = state.member ?? this.guild.members.cache.get(state.id);
 			if (!member || member.user?.bot) continue;
-			names.push(`${member.displayName}${this.isOwnerId(member.id) ? t('runtime.owner_suffix') : ''}`);
+			names.push(`${this.speakerLabel(member.id)}${this.isOwnerId(member.id) ? t('runtime.owner_suffix') : ''}`);
 		}
 		if (!names.length) return;
 		this.live.appendContext('instructions', t('runtime.roster_context', { prefix, names: safeContext(names.join(', ')) }));

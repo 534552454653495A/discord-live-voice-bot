@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.4] — 2026-09-14
+
+### Fixed
+
+- **Two people in one channel can carry the same display name**, and then "X said this" identifies
+  nobody. Seen live with the owner and another member showing as the same word. Where a name is shared
+  by somebody else in the channel, the account name now goes with it, in what the model is told and in
+  the log. Names nobody shares are left alone.
+
 ## [1.8.3] — 2026-09-14
 
 ### Fixed

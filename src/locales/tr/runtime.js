@@ -12,6 +12,7 @@ export default {
 	speaker_line_overlap: 'Kanalda {names} aynı anda konuştu, hangisinin söylediğini ayıramıyorum: "{line}"',
 	log_context_overlap: '[bağlam] aynı anda iki ses: "{line}"',
 	log_command_unclear: '[komut] çalıştırılmadı, satır tek kişiye ait değil: "{line}"',
+	name_with_account: '{name} ({account} hesabı)',
 	name_join: ' ve ',
 	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
