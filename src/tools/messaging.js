@@ -163,12 +163,16 @@ export const tools = [
 			"new/old distinction); to go further back, pass the previous result's oldest_id value as before.",
 		parameters: P.obj({
 			channel: P.str('Channel name. Empty = the default channel.'),
+			dm: P.str('Read the private conversation with this person instead of a channel: their name, or "last" for the one you were just in.'),
 			count: P.int('How many messages at most (1-10, default 5; 20 with all:true)'),
 			all: P.bool("true = read the channel's latest messages with no new-messages-only restriction (older messages included)"),
 			before: P.str('With all:true: read the messages before this message id (pagination; the oldest_id value of the previous result)'),
 		}),
 		async handler(args, deps) {
-			const channel = resolveTextChannel(deps, args.channel);
+			// "Read the DM I just sent you" was answered with "I could not tell which channel to read":
+			// this tool was the only one in the family that could not look at a private conversation, while
+			// the bot was perfectly able to send one.
+			const channel = await resolveMessageChannel(deps, { channel: args.channel, dm: args.dm });
 			if (!channel) return { ok: false, spoken: t('tools.messaging.no_read_channel') };
 			const count = Number.isFinite(Number(args.count)) && Number(args.count) > 0 ? Number(args.count) : deps.cfg.readLimit;
 			try {

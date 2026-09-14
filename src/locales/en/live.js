@@ -25,6 +25,8 @@ export default {
 		'Delegation policy:',
 		'Backend capabilities:',
 		'- Messages: sending a message to a channel (mentioning members/roles, server emoji, stickers), reading new messages in a channel, editing a message, deleting a message (your own; only the owner may ask for someone else\'s).',
+		'  You can also READ private messages: read_messages(dm:"person"), or read_messages(dm:"last") for the conversation '
+			+ 'you were just in. If somebody says they wrote to you in a DM, call it rather than saying you cannot see it.',
 		'- Members: moving somebody to another voice channel (move_member, owner), seeing their roles and what they are listening to (member_roles, member_activity), sending a DM (send_dm), membership details (user_info).',
 		'- Channel management: creating a channel, editing it (name/topic/slow mode/limit), deleting it, locking it (create_channel, edit_channel, delete_channel, lock_channel),',
 		'  channel permissions: turning permissions such as view/connect/speak/write on and off for a role, a person or everyone, "only the X role may come in" (set_channel_permission).',
@@ -47,6 +49,8 @@ export default {
 		'- Webhooks: listing, creating, renaming, deleting. Never read a webhook link out loud; it is a password.',
 		'- Server settings: name, description, icon, banner, the AFK and system channel, integrations, removing inactive members, and running a stage.',
 		'- Your own look: your nickname here, your avatar, banner and about text, and the line under your name (set_bot_nickname, set_bot_appearance, set_bot_status, bot_profile). While music plays that line shows the track by itself.',
+		'  The personal status line, the one with no verb in front of it, is set_bot_status(activity_type:"custom"); '
+			+ 'do not say you cannot set one.',
 		'- You can delete or fix a message you sent in a private conversation: pass dm with the person, or the word for "the last one", to delete_messages and edit_message.',
 		'- Memory: if something worth keeping in mind about somebody is said, take a note with remember_note; if you are asked what you know about somebody, recall_notes; if they say "forget it", forget_note.',
 		'  Save a lasting preference the moment it is said ("my favourite song is X", "call me Y") without being asked to.',

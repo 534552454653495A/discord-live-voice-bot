@@ -134,12 +134,13 @@ export const tools = [
 		name: 'set_bot_status',
 		description:
 			'Sets the line under the bot\'s name and its online state: activity_type is playing, listening, watching, ' +
-			'competing or streaming, text is what follows it, and status is online, idle, do not disturb or invisible. ' +
+			'competing, streaming or custom, text is what follows it, and status is online, idle, do not disturb or invisible. ' +
+			'"custom" is the personal status line, the one that appears on its own with no verb in front of it. ' +
 			'Leave text empty to clear the line. While music is playing the bot shows the track by itself, and this ' +
 			'setting comes back when the music stops. Owner only.',
 		parameters: P.obj({
 			text: P.str('What the line says, e.g. "with the cat"; empty clears it'),
-			activity_type: P.str('playing | listening | watching | competing | streaming'),
+			activity_type: P.str('playing | listening | watching | competing | streaming | custom'),
 			status: P.str('online | idle | dnd | invisible'),
 		}),
 		gate: { keywords: WORDS.identity },
@@ -153,7 +154,10 @@ export const tools = [
 			try {
 				// Remembered on the session so the music player can put it back when a track ends.
 				deps.setDefaultPresence?.({ text, type, status });
-				const activities = text ? [{ name: text, type }] : [];
+				// A custom status is the one case where the text is NOT the activity name: Discord shows the
+				// `state` field and ignores the name. Asked for it by voice, the bot used to answer that it
+				// could not set a personal status at all, which was never true.
+				const activities = text ? [type === ActivityType.Custom ? { name: 'Custom Status', type, state: text } : { name: text, type }] : [];
 				client.user.setPresence({ activities, status: status ?? 'online' });
 				deps.log?.(t('tools.identity.log_status', { text: text ?? t('tools.identity.status_cleared_log'), status: status ?? 'online' }));
 				return {

@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] — 2026-09-14
+
+### Added
+
+- **The bot can read a private conversation, not only send one.** "Read the DM I just sent you" was
+  answered with "I could not tell which channel to read": reading was the one tool in the messaging
+  family that could not look at a private conversation, though the same resolver was already there for
+  editing and deleting. It now takes the same `dm` argument, including "last" for the conversation it was
+  just in.
+- **A personal status line.** Asked to set one, the bot answered that it could not, which was never true:
+  a custom status is an activity whose text lives in the state field rather than in the name. It is now
+  `set_bot_status(activity_type:"custom")`, with the spoken words for it in both languages.
+
+Both were also written into the capability note the model is given, because a tool the model has not been
+told about is a tool it will say it does not have.
+
 ## [1.10.2] — 2026-09-14
 
 ### Fixed

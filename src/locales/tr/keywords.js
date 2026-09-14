@@ -19,6 +19,7 @@ export default {
 		watching: ['izliyor', 'izliyorum', 'izleme'],
 		competing: ['yarisiyor', 'yarışıyor'],
 		streaming: ['yayinda', 'yayında', 'yayin'],
+		custom: ['ozel', 'özel', 'kisisel', 'kişisel', 'ozel durum', 'özel durum', 'kisisel durum', 'kişisel durum'],
 	},
 	no_picture_words: ['yok', 'kaldir', 'kaldır', 'sil', 'temizle', 'kapat'],
 	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).

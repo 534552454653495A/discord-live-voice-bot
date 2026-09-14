@@ -840,6 +840,27 @@ await checkAsync('read_messages: the first read returns the last messages, later
 	assert.equal(third.data.count, 0);
 	assert.ok(third.spoken.includes('no new messages'), third.spoken);
 });
+// Live failure: "read the DM I just sent you" came back as "I could not tell which channel to read".
+// This was the only tool in the messaging family that could not look at a private conversation, while
+// the bot was perfectly able to send one.
+await checkAsync('read_messages: reads the private conversation the bot was last in', async () => {
+	const dmMessages = new Map([
+		[9, { id: 9, createdTimestamp: 9, content: 'here is the invite', author: { bot: false, displayName: 'Kaan' }, stickers: new Map(), attachments: new Map(), embeds: [] }],
+	]);
+	const dmChannel = {
+		id: 'dm-1',
+		name: null,
+		messages: { fetch: async () => dmMessages },
+	};
+	const { deps } = makeToolDeps();
+	deps.lastDirectMessage = () => ({ channelId: 'dm-1', name: 'Kaan' });
+	deps.client = { ...deps.client, channels: { cache: new Map([['dm-1', dmChannel]]), fetch: async () => dmChannel } };
+
+	const result = await callTool('read_messages', { dm: 'last' }, deps);
+	assert.equal(result.ok, true, result.spoken);
+	assert.ok(result.spoken.includes('here is the invite'), result.spoken);
+});
+
 await checkAsync('read_messages: warns when the message content is hidden (intent off)', async () => {
 	const messages = new Map([
 		[1, { id: 1, createdTimestamp: 1, content: '', author: { bot: false, displayName: 'Ali' }, stickers: new Map(), attachments: new Map(), embeds: [] }],

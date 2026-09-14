@@ -86,6 +86,16 @@ describe('the bot changing its own face', () => {
 		assert.equal(deps.defaultPresence().text, 'with the cat', 'kept so the music can hand it back');
 	});
 
+	// Asked by voice to set its personal status, the bot answered that it could not, which was never true:
+	// a custom status is an activity whose text lives in `state` rather than in the name.
+	it('sets the personal status line, where the text is the state and not the name', async () => {
+		const { deps, calls } = makeDeps();
+		const result = await callTool('set_bot_status', { text: 'Selam ben Melis', activity_type: 'custom' }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		const presence = calls.find((entry) => 'presence' in entry)?.presence;
+		assert.deepEqual(presence.activities, [{ name: 'Custom Status', type: ActivityType.Custom, state: 'Selam ben Melis' }]);
+	});
+
 	it('reports the profile, and every changing tool needs the owner', async () => {
 		const { deps } = makeDeps();
 		const profile = await callTool('bot_profile', {}, deps);

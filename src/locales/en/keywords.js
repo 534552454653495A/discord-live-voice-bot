@@ -19,6 +19,7 @@ export default {
 		watching: ['watching', 'watch'],
 		competing: ['competing', 'compete'],
 		streaming: ['streaming', 'stream'],
+		custom: ['custom', 'custom status', 'personal status', 'status line'],
 	},
 	no_picture_words: ['none', 'no picture', 'remove', 'clear', 'off'],
 	// Spoken ways of saying "do not put this channel in any category" (edit_channel parent).
