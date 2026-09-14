@@ -186,6 +186,13 @@ export class SpeakerAttribution {
 	}
 
 	_track(startMs, endMs, ids, presentIds = ids) {
+		// Nobody cleared the speech bar, but exactly one person's voice was in the frame. That is somebody
+		// talking quietly, and the model transcribes it whether our own ear called it speech or not:
+		// measured live, a fragment could sit two seconds past the last thing we had recorded while the
+		// speaker had never stopped. Recorded as a weak stretch -- good enough to put a name on a line,
+		// never good enough to act on. Two quiet voices at once stay unrecorded: that really is a guess.
+		const weak = !ids.length && presentIds.length === 1;
+		if (weak) ids = presentIds;
 		if (!ids.length) return; // silence is not recorded; the track keeps its gaps
 		// The mixer orders by loudness, and the louder of two people swaps several times a second, so
 		// ['a','b'] and ['b','a'] are the same 20 ms and have to merge. Comparing the raw list would push a
@@ -201,7 +208,7 @@ export class SpeakerAttribution {
 		// Alone in the sound, not merely alone in the speaking list.
 		const solo = ids.length === 1 && presentIds.filter((id) => id !== ids[0]).length === 0;
 		const last = this.track[this.track.length - 1];
-		if (last && last.endMs === startMs && last.key === key && last.solo === solo) {
+		if (last && last.endMs === startMs && last.key === key && last.solo === solo && last.weak === weak) {
 			last.endMs = endMs;
 			return;
 		}
@@ -211,6 +218,7 @@ export class SpeakerAttribution {
 			ids,
 			key,
 			solo,
+			weak,
 			// A derived cache, never a primary fact: "the owner was in this frame" is not the same claim as
 			// "the owner said this", and keeping them apart is the whole point of the change.
 			owner: this.ownerId !== null && ids.includes(this.ownerId),
@@ -270,12 +278,14 @@ export class SpeakerAttribution {
 		const to = Number.isFinite(endMs) && endMs > from ? endMs : from + 400;
 		const totals = new Map();
 		let heardMs = 0;
+		let strongMs = 0; // of the audible time, how much of it we would call speech rather than a murmur
 		for (let i = this._firstAfter(from); i < this.track.length; i++) {
 			const seg = this.track[i];
 			if (seg.startMs >= to) break;
 			const overlap = Math.min(seg.endMs, to) - Math.max(seg.startMs, from);
 			if (overlap <= 0) continue;
 			heardMs += overlap;
+			if (!seg.weak) strongMs += overlap;
 			for (const id of seg.ids) {
 				let entry = totals.get(id);
 				if (!entry) {
@@ -295,7 +305,7 @@ export class SpeakerAttribution {
 		// Deterministic, including the ties: otherwise an exact tie silently keeps whoever went into the
 		// map first, which is the order the mixer happened to list them in that frame.
 		ranked.sort((a, b) => b.ms - a.ms || b.soloMs - a.soloMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-		return { heardMs, ranked, id: ranked[0].id, share: ranked[0].solo, speakers: ranked.length };
+		return { heardMs, strongMs, ranked, id: ranked[0].id, share: ranked[0].solo, speakers: ranked.length };
 	}
 
 	/**
@@ -312,7 +322,15 @@ export class SpeakerAttribution {
 	 */
 	resolveSpeaker(startMs, endMs) {
 		const direct = this.speakerShareAt(startMs, endMs);
-		if (direct.ranked.length) return this._rank(direct, 'direct');
+		// A stretch made only of murmur is an answer about whose turn it was, not about who said these
+		// words, so it is reported the same way as an answer taken from around a pause.
+		if (direct.ranked.length) {
+			if (direct.strongMs > 0) return this._rank(direct, 'direct');
+			// Murmur only. It can carry a name and it can never carry certainty, so it is capped the same
+			// way an answer taken from around a pause is: enough for a transcript line, never for a command.
+			const quiet = this._rank(direct, 'quiet');
+			return quiet.confidence === 'sure' ? { ...quiet, confidence: 'leaning' } : quiet;
+		}
 		// Nothing in the stretch at all. Before calling that an overlap -- which it is not, and which is
 		// what the bot was telling people -- look at the audio on either side of it.
 		if (!Number.isFinite(startMs)) return { id: null, confidence: 'unsure', reason: 'silence', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };

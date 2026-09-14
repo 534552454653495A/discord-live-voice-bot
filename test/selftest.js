@@ -1256,12 +1256,19 @@ await checkAsync('admin: channel create/edit/lock/delete, role create/edit/delet
 	assert.equal(confirmedDelete.ok, true, confirmedDelete.spoken);
 	assert.equal(deleted, 'test');
 
-	// An expired confirmation is not accepted. Pending questions live in a per-guild store of their own
-	// (they have to outlive the per-call deps object), so the test injects one to age it by hand.
+	// An expired confirmation does not act. Pending questions live in a per-guild store of their own (they
+	// have to outlive the per-call deps object), so the test injects one to age it by hand.
 	deps.pendingConfirmations = new Map();
 	assert.equal((await callTool('delete_role', { role: 'Sample' }, deps)).needs_confirmation, true);
-	deps.pendingConfirmations.set('delete_role', { target: 'r5', at: Date.now() - 60_000 });
-	assert.equal((await callTool('delete_role', { role: 'Sample', confirm: true }, deps)).ok, false, 'a stale confirmation is invalid');
+	deps.pendingConfirmations.set('delete_role', { target: 'r5', at: Date.now() - 120_000 });
+	const expired = await callTool('delete_role', { role: 'Sample', confirm: true }, deps);
+	assert.equal(expired.ok, false, 'an expired confirmation does not delete anything');
+	// ...and it asks again rather than refusing for ever. Seen live: the owner confirmed a channel
+	// deletion four times and every attempt came back "I could not match that", because the record was
+	// thrown away on each refusal and the model kept sending the confirmation it had been given.
+	assert.equal(expired.needs_confirmation, true, 'the question is put again, so there is a way forward');
+	const second = await callTool('delete_role', { role: 'Sample', confirm: true }, deps);
+	assert.equal(second.ok, true, `and answering the new question works: ${second.spoken}`);
 	assert.equal((await callTool('delete_role', { role: 'Sample' }, deps)).needs_confirmation, true);
 	assert.equal((await callTool('delete_role', { role: 'Sample', confirm: true }, deps)).ok, true);
 	assert.ok(actions.includes('delete-role'), actions.join(' | '));

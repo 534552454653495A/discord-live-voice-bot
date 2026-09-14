@@ -649,7 +649,10 @@ export function ownerAllowed(deps, keywords = null) {
 
 // The transcript layer can mangle names ("Ediz" -> "Editz"); the owner gate proves WHO spoke, not WHAT
 // was heard. That is why irreversible operations are two-step.
-const CONFIRM_TTL_MS = 30_000;
+// Half a minute is not long in a voice channel: the model takes a few seconds a turn, people talk over
+// each other, and the owner's "yes, go ahead" can easily arrive later than that. Ninety seconds is still
+// short enough that a confirmation cannot be given to a question nobody remembers asking.
+const CONFIRM_TTL_MS = 90_000;
 
 // Pending confirmations are kept HERE, per guild, not on the deps object: the realtime path builds a
 // fresh deps for every tool call (so the owner gate can pin the turn to the request), and a question
@@ -684,8 +687,16 @@ export function checkConfirmation(deps, { key, target, confirm, question }) {
 		pending.set(key, { target, at: now });
 		return { ask: question };
 	}
+	if (!previous || previous.target !== target) {
+		// Somebody said yes to a question that had expired, or to a different one. Refusing and throwing
+		// the record away left no way forward at all: the model keeps sending the confirmation it was
+		// given, and every attempt is answered "I could not match that" for ever. Seen live, the owner
+		// confirmed four times and the channel was never deleted. So the question is asked again, which is
+		// still two steps and still cannot act on its own.
+		pending.set(key, { target, at: now });
+		return { ask: question, stale: true };
+	}
 	pending.delete(key);
-	if (!previous || previous.target !== target) return { stale: true };
 	return { ok: true };
 }
 

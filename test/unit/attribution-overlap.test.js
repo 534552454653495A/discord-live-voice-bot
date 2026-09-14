@@ -134,6 +134,25 @@ describe('the gate in front of the admin tools', () => {
 		assert.deepEqual(hit.ids.sort(), ['x', 'y'], 'and both are named, rather than "somebody"');
 	});
 
+	// Measured live: a fragment could sit two seconds past the last thing we had recorded while the person
+	// had never stopped talking. They were simply too quiet to clear our speech bar, and the model
+	// transcribes what it hears whether our own ear called it speech or not.
+	it('records somebody talking quietly, and never treats it as evidence', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		for (let i = 0; i < 60; i++) a.onFrame({ active: [], present: ['guest'], sent: true });
+		const hit = a.resolveSpeaker(200, 900);
+		assert.equal(hit.id, 'guest', 'the line carries their name');
+		assert.equal(hit.reason, 'quiet');
+		assert.equal(hit.confidence, 'leaning', 'and never certainty');
+		assert.equal(a.speakerAt(200, 900), null, 'a murmur cannot open the gate');
+	});
+
+	it('leaves two quiet voices at once unrecorded, because that really is a guess', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		for (let i = 0; i < 60; i++) a.onFrame({ active: [], present: ['x', 'y'], sent: true });
+		assert.equal(a.resolveSpeaker(200, 900).reason, 'silence');
+	});
+
 	it('says there is nothing to go on when there really is nothing', () => {
 		const a = new SpeakerAttribution({ ownerId: 'owner' });
 		const hit = a.resolveSpeaker(0, 400);

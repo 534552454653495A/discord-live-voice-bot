@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] — 2026-09-14
+
+### Fixed
+
+- **A confirmation could not be given.** Asked to delete a channel, the bot asked for confirmation, the
+  owner gave it four times, and every attempt came back "I could not match that". An answer to a question
+  that had expired threw the record away and refused, so the next attempt had nothing to match either,
+  for ever. It now asks the question again, which is still two steps and still cannot act on its own.
+  The window is ninety seconds rather than thirty, because half a minute is nothing in a voice channel.
+- **Somebody talking quietly is recorded as talking.** The diagnostic showed fragments sitting two
+  seconds past the last thing the bot had recorded while the speaker had never stopped: they were simply
+  below the bar that counts as speech, and the model transcribes what it hears whether our own ear agreed
+  or not. A frame where exactly one voice is present without clearing that bar is now recorded as a weak
+  stretch: enough to put a name on a line, never enough to act on. Two quiet voices at once stay
+  unrecorded, because that really is a guess.
+
 ## [1.12.0] — 2026-09-14
 
 ### Security
