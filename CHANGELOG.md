@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] — 2026-09-15
+
+### Changed
+
+- **The local brain speaks while it is still thinking.** The reply used to be awaited in full and only
+  then handed to the mouth, which already speaks sentence by sentence, so the entire generation time sat
+  in front of the first word for no reason. Each piece now crosses as it arrives and the first sentence
+  goes to Chatterbox while the rest is still being written. Tool calls arrive in the same stream and are
+  stitched back together by index; a round that turns out to be a tool call still produces no speech,
+  because the answer comes after the tool has run.
+- **How long the local ear waits before deciding somebody stopped talking is a setting**,
+  `LOCAL_STT_SILENCE_MS`, default unchanged at 700 ms. It sits in front of everything else in local mode,
+  so it is the cheapest thing to trade against being cut off mid-sentence.
+
 ## [1.13.2] — 2026-09-14
 
 ### Changed

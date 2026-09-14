@@ -179,6 +179,10 @@ export function loadConfig(env = process.env) {
 		// The realtime protocol's own events, separately: DEBUG is for understanding what the bot decided,
 		// and the event stream is a different question that drowns it out at several lines a second.
 		debugLive: bool(env.DEBUG_LIVE, false),
+		// How long the local ear waits after the last packet before deciding somebody has stopped talking.
+		// It sits in front of everything else in local mode, so it is the cheapest thing to trade against
+		// being cut off mid-sentence. Left where it was by default.
+		sttSilenceMs: num(env.LOCAL_STT_SILENCE_MS, 700, { min: 200, max: 3000 }),
 		idleCloseMs: num(env.IDLE_CLOSE_MINUTES, 10, { min: 0 }) * 60_000,
 
 		// Cost: daily GPT-Live quota in seconds (0 = unlimited). Once it is used up the session stays closed until the next day.

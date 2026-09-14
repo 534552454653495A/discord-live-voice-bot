@@ -249,7 +249,7 @@ export class GuildSession {
 		this.localBrainWarnedAt = 0;
 		this.localBrainRetryTimer = null;
 		this.localBrainRetryCount = 0;
-		this.segmenter = new SpeechSegmenter();
+		this.segmenter = new SpeechSegmenter({ silenceMs: cfg.sttSilenceMs });
 		this.localBrain = new LocalBrain({
 			provider,
 			persona: () => ({ name: this.persona().name, instructions: this.persona().instructions }),
@@ -864,9 +864,27 @@ export class GuildSession {
 				this.log(t('runtime.command_error', { error: err.message }));
 			}
 		}
-		const reply = await this.localBrain.handleUtterance({ userName: name, text: line, context: turnDeps });
+		// Speak it as it is written, not after it is finished. The brain hands over each piece of the reply
+		// as it arrives and enqueueLocalSpeech already cuts on sentence endings, so the first sentence is on
+		// its way to Chatterbox while the rest is still being generated. Whatever the stream produced is
+		// therefore already queued by the time the call returns.
+		let streamed = false;
+		const onDelta = (piece) => {
+			streamed = true;
+			this.enqueueLocalSpeech(piece);
+		};
+		this.localBrain.on('delta', onDelta);
+		let reply;
+		try {
+			reply = await this.localBrain.handleUtterance({ userName: name, text: line, context: turnDeps });
+		} finally {
+			this.localBrain.off('delta', onDelta);
+		}
 		if (reply.error) this.log(t('runtime.local_brain_no_reply', { error: reply.error }));
-		if (reply.responded && reply.text) this.enqueueLocalSpeech(reply.text);
+		// The tail of the last sentence, if it never got its punctuation; or the whole reply on a path that
+		// did not stream at all.
+		if (streamed) this.flushLocalSpeech();
+		else if (reply.responded && reply.text) this.enqueueLocalSpeech(reply.text);
 	}
 
 	// ---------------------------------------------------------------- GPT-Live session
@@ -1609,6 +1627,17 @@ export class GuildSession {
 		}
 		this.live.appendContext('instructions', lines.join('\n'));
 		if (this.cfg.transcripts) this.log(t('runtime.log_context_speaker', { name, owner: owner ? t('runtime.owner_tag') : '' }));
+	}
+
+	/** The tail of a streamed reply: speak what is left even though it never got its punctuation. */
+	flushLocalSpeech() {
+		if (this.ttsFlushTimer) clearTimeout(this.ttsFlushTimer);
+		this.ttsFlushTimer = null;
+		const tail = this.ttsPending.trim();
+		this.ttsPending = '';
+		if (!tail) return;
+		this.ttsQueue.push(tail);
+		if (!this.ttsBusy) void this.runTtsQueue();
 	}
 
 	/**

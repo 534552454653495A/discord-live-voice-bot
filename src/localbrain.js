@@ -129,23 +129,58 @@ export class LocalBrain extends EventEmitter {
 		}
 	}
 
+	/**
+	 * One round of the conversation, streamed.
+	 *
+	 * The mouth downstream already speaks sentence by sentence, so the whole generation time used to sit
+	 * in front of the first word for no reason: the reply was awaited in full, then handed over. Streaming
+	 * hands each piece across as it arrives, and the first sentence can be spoken while the rest is still
+	 * being written. In a local setup that is the difference between answering in four seconds and
+	 * answering in one.
+	 *
+	 * Tool calls arrive in the same stream, in fragments that have to be stitched back together by index.
+	 * A round that turns out to be a tool call produces no speech, which is right: the answer comes after
+	 * the tool has run.
+	 */
+	async _stream(client, model, messages, useTools) {
+		const stream = await client.chat.completions.create(
+			{
+				model,
+				messages,
+				max_tokens: this.maxTokens,
+				stream: true,
+				...(useTools ? { tools: this.tools, tool_choice: 'auto' } : {}),
+			},
+			{ timeout: 45_000 },
+		);
+		let content = '';
+		const calls = [];
+		for await (const chunk of stream) {
+			const delta = chunk?.choices?.[0]?.delta ?? {};
+			if (delta.content) {
+				content += delta.content;
+				// Handed over the moment it exists. The listener decides what to do with a half sentence.
+				this.emit('delta', delta.content);
+			}
+			for (const piece of delta.tool_calls ?? []) {
+				const index = piece.index ?? 0;
+				const call = (calls[index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
+				if (piece.id) call.id = piece.id;
+				if (piece.function?.name) call.function.name += piece.function.name;
+				if (piece.function?.arguments) call.function.arguments += piece.function.arguments;
+			}
+		}
+		return { content, calls: calls.filter(Boolean) };
+	}
+
 	async _respond(context = null) {
 		const client = this.provider.textClient;
 		const model = this.provider.textModel;
 		const messages = [{ role: 'system', content: this._systemPrompt() }, ...this.history];
 		for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-			const response = await client.chat.completions.create(
-				{
-					model,
-					messages,
-					max_tokens: this.maxTokens,
-					...(this.tools.length && this.callTool ? { tools: this.tools, tool_choice: round < MAX_TOOL_ROUNDS ? 'auto' : 'none' } : {}),
-				},
-				{ timeout: 45_000 },
-			);
-			const choice = response.choices?.[0];
-			const message = choice?.message ?? {};
-			const calls = message.tool_calls ?? [];
+			const useTools = Boolean(this.tools.length && this.callTool && round < MAX_TOOL_ROUNDS);
+			const { content, calls } = await this._stream(client, model, messages, useTools);
+			const message = { content, tool_calls: calls.length ? calls : undefined };
 			if (!calls.length) return String(message.content ?? '').replace(/\s+/g, ' ').trim();
 			messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: calls });
 			for (const call of calls) {

@@ -4,6 +4,27 @@ import { LocalBrain, toChatTools } from '../../src/localbrain.js';
 import { LocalStt, SpeechSegmenter } from '../../src/localstt.js';
 import { describeLiveError } from '../../src/live.js';
 
+// The brain streams, so the double has to as well: one chunk per word for the content, and tool calls
+// split across two chunks, because that is how they really arrive and stitching them back together by
+// index is the part worth testing.
+function streamOf(message) {
+	const chunks = [];
+	for (const word of String(message.content ?? '').match(/\S+\s*/g) ?? []) {
+		chunks.push({ choices: [{ delta: { content: word } }] });
+	}
+	(message.tool_calls ?? []).forEach((call, index) => {
+		const args = String(call.function?.arguments ?? '');
+		const half = Math.ceil(args.length / 2);
+		chunks.push({ choices: [{ delta: { tool_calls: [{ index, id: call.id, function: { name: call.function?.name, arguments: args.slice(0, half) } }] } }] });
+		chunks.push({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: args.slice(half) } }] } }] });
+	});
+	return {
+		async *[Symbol.asyncIterator]() {
+			for (const chunk of chunks) yield chunk;
+		},
+	};
+}
+
 function fakeProvider(script) {
 	const calls = [];
 	let i = 0;
@@ -19,7 +40,7 @@ function fakeProvider(script) {
 							calls.push(payload);
 							const step = script[Math.min(i, script.length - 1)];
 							i++;
-							return { choices: [{ message: step }] };
+							return streamOf(step ?? {});
 						},
 					},
 				},
@@ -29,6 +50,21 @@ function fakeProvider(script) {
 }
 
 describe('LocalBrain', () => {
+	// The mouth speaks sentence by sentence, so waiting for the whole reply before handing any of it over
+	// put the entire generation time in front of the first word. The pieces now cross as they arrive.
+	it('hands the reply over piece by piece, before it is finished', async () => {
+		const { provider } = fakeProvider([{ content: 'Merhaba canim. Nasilsin bugun?' }]);
+		const brain = new LocalBrain({ provider, participants: () => 1 });
+		const pieces = [];
+		brain.on('delta', (piece) => pieces.push(piece));
+		const result = await brain.handleUtterance({ userName: 'Kaan', text: 'selam' });
+
+		assert.ok(pieces.length > 1, `the reply arrives in pieces, not in one go: ${JSON.stringify(pieces)}`);
+		assert.equal(pieces.join(''), 'Merhaba canim. Nasilsin bugun?');
+		assert.ok(pieces[0].length < result.text.length, 'and the first piece is only the beginning of it');
+		assert.equal(result.text, 'Merhaba canim. Nasilsin bugun?');
+	});
+
 	it('converts the Responses tool schema into the chat format and drops the built-in tools', () => {
 		const tools = toChatTools([{ type: 'function', name: 'x', description: 'd', parameters: { type: 'object', properties: {} } }, { type: 'web_search' }]);
 		assert.equal(tools.length, 1);
@@ -94,7 +130,7 @@ describe('LocalBrain', () => {
 		await new Promise((r) => setImmediate(r));
 		const second = await brain.handleUtterance({ userName: 'Bob', text: 'I am here too' });
 		assert.equal(second.queued, true);
-		resolveFirst({ choices: [{ message: { content: 'hello!' } }] });
+		resolveFirst(streamOf({ content: 'hello!' }));
 		assert.equal((await first).text, 'hello!');
 		assert.equal(brain.history.filter((m) => m.role === 'user').length, 2);
 	});
