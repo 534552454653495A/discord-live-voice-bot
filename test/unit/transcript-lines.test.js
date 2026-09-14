@@ -246,6 +246,29 @@ describe('who the model is told said a line', () => {
 		);
 	});
 
+	// Measured live: in every flush that produced two lines, the SECOND one came back as "two voices at
+	// once", four times out of four. The realtime API reports how far the utterance has got, not what
+	// this fragment covers, so the second fragment's window swallowed the first speaker's audio.
+	it('judges a fragment on the audio that is new since the last one', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		room.voices('guest', 45); // 0 - 900 ms
+		room.voices('third', 45); // 900 - 1800 ms
+		// Both fragments carry the same start, which is how the API really reports them.
+		room.delta('bence olmaz ', 0, 900);
+		room.delta('neden olmasin', 0, 1800);
+		t.mock.timers.tick(1300);
+
+		assert.deepEqual(
+			room.spoken(),
+			[
+				{ who: 'guest', text: 'bence olmaz' },
+				{ who: 'third', text: 'neden olmasin' },
+			],
+			'the second fragment belongs to whoever spoke during ITS stretch of audio',
+		);
+	});
+
 	it('keeps the owner as the owner while somebody else has a microphone open', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession();

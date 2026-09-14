@@ -52,7 +52,7 @@ export default {
 		setting: ['ayar', 'setting', 'mod', 'modu', 'modunu'],
 		delete: ['sil', 'temizle', 'kaldir'],
 		channel: ['kanal', 'oda', 'kategori', 'kilit', 'kilitle'],
-		name: ['nick', 'nickname', 'isim', 'takma', 'adi', 'adini'],
+		name: ['nick', 'nickname', 'isim', 'ismi', 'takma', 'adi', 'adin', 'kullanici'],
 		invite: ['davet', 'invite', 'link'],
 		log: ['log', 'kayit', 'denetim'],
 		move: [
@@ -72,7 +72,12 @@ export default {
 		automod: ['otomod', 'automod', 'otomatik moderasyon', 'filtre', 'kural'],
 		webhook: ['webhook', 'kanca'],
 		server: ['sunucu', 'server', 'temizle', 'prune', 'widget', 'banner'],
-		identity: ['avatar', 'banner', 'profil', 'takma', 'nick', 'durum', 'oynuyor', 'gorunum', 'resim', 'hakkinda', 'biyografi'],
+		identity: [
+			'avatar', 'banner', 'profil', 'takma', 'nick', 'durum', 'oynuyor', 'gorunum', 'resim', 'hakkinda',
+			// "kendi ismini degistir" was refused because not one of these words is a name. Turkish drops the
+			// vowel in the possessive (isim -> ismi), so the bare stem never matches what is actually said.
+			'biyografi', 'isim', 'ismi', 'adi', 'adin', 'kullanici',
+		],
 		permission: [
 			'yetki', 'izin', 'erisim', 'kanal', 'oda', 'kilit', 'baglan', 'girebil', 'giremes', 'girsin', 'girmesin',
 			'gorebil', 'goremes', 'gorsun', 'gormesin', 'yazabil', 'yazamas', 'yazsin', 'yazmasin', 'konusabil', 'konusamas',

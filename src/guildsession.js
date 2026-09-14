@@ -1194,14 +1194,31 @@ export class GuildSession {
 
 	onTranscript({ speaker, text, startMs, endMs }) {
 		const cfg = this.cfg;
-		let part = { text, startMs, endMs, id: null, sure: false, confidence: 'unsure', ids: [] };
+		let buf = this.transcriptBuffers.get(speaker);
+		if (!buf) {
+			buf = { parts: [], timer: null, startedAt: 0, lastEnd: null };
+			this.transcriptBuffers.set(speaker, buf);
+		}
+		// The realtime API reports the stretch an utterance has reached, not the stretch THIS fragment
+		// covers: the second fragment of a sentence comes back spanning the first one as well. Read
+		// literally, every fragment after the first one carries the previous speaker's audio inside its
+		// own window, which in a room with three people means every line but the first reads as "two
+		// voices at once" -- measured live, four times out of four. So a fragment is judged on the audio
+		// that is NEW since the last one. When the API does send a per-fragment window this changes
+		// nothing, because the window already starts where the last one ended.
+		let from = startMs;
+		if (Number.isFinite(buf.lastEnd) && Number.isFinite(from) && Number.isFinite(endMs) && from < buf.lastEnd && endMs > buf.lastEnd) {
+			from = buf.lastEnd;
+		}
+		if (Number.isFinite(endMs) && (!Number.isFinite(buf.lastEnd) || endMs > buf.lastEnd)) buf.lastEnd = endMs;
+		let part = { text, startMs: from, endMs, id: null, sure: false, confidence: 'unsure', ids: [] };
 		if (speaker === 'user') {
 			// ONE resolution per delta, made where the audio track lives and then reused for the record, for
 			// the model's context and for the run. Resolving it again downstream is how two parts of the code
 			// ended up naming two different people for the same words.
-			const hit = this.attribution.noteTranscript(text, { startMs, endMs });
+			const hit = this.attribution.noteTranscript(text, { startMs: from, endMs });
 			this.lastUserDeltaAt = Date.now();
-			if (hit) part = { text, startMs, endMs, id: hit.id, sure: hit.sure, confidence: hit.confidence, ids: hit.ids };
+			if (hit) part = { text, startMs: from, endMs, id: hit.id, sure: hit.sure, confidence: hit.confidence, ids: hit.ids };
 			// From the audio position to the wall clock: when did the user actually stop speaking?
 			const lag = Number.isFinite(endMs) ? Math.max(0, this.attribution.audioMs - endMs) : 0;
 			this.latency.userSpeechEnd(Date.now() - lag);
@@ -1217,11 +1234,6 @@ export class GuildSession {
 					}),
 				);
 			}
-		}
-		let buf = this.transcriptBuffers.get(speaker);
-		if (!buf) {
-			buf = { parts: [], timer: null, startedAt: 0 };
-			this.transcriptBuffers.set(speaker, buf);
 		}
 		if (!buf.parts.length) buf.startedAt = Date.now();
 		buf.parts.push(part);

@@ -63,7 +63,10 @@ export default {
 		automod: ['automod', 'automoderation', 'filter', 'rule'],
 		webhook: ['webhook', 'hook'],
 		server: ['server', 'guild', 'prune', 'vanity', 'widget', 'banner'],
-		identity: ['avatar', 'banner', 'profile', 'nickname', 'status', 'presence', 'playing', 'appearance', 'picture', 'bio', 'about'],
+		identity: [
+			'avatar', 'banner', 'profile', 'nickname', 'status', 'presence', 'playing', 'appearance', 'picture',
+			'bio', 'about', 'rename', 'username', '=name',
+		],
 		permission: [
 			'permission', 'perm', 'access', 'channel', 'room', 'connect', '=lock', '=join', '=enter', '=view', '=see',
 			'=read', '=write', '=send', '=speak', '=talk', '=allow', '=deny', '=block', '=only',

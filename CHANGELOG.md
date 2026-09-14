@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3] — 2026-09-14
+
+### Fixed
+
+- **Every line but the first in a flush read as "two voices at once".** The realtime API reports how far
+  an utterance has got, not the stretch a single fragment covers, so the second fragment of a sentence
+  comes back spanning the first one as well. Read literally, every fragment after the first carried the
+  previous speaker's audio inside its own window: measured in a live session with three people, the
+  second line of a flush was called an overlap four times out of four. A fragment is now judged on the
+  audio that is new since the last one. Where the API does send a per-fragment window this changes
+  nothing, because that window already starts where the last one ended.
+- **Asking the bot to change its own name was refused as "the owner did not say the keyword".** Not one
+  word in the identity vocabulary was a name. Turkish also drops the vowel in the possessive, so the
+  bare stem never matched what was actually said.
+
 ## [1.8.2] — 2026-09-14
 
 ### Fixed
