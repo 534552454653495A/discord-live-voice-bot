@@ -334,6 +334,34 @@ describe('SpeakerAttribution: keyword matching', () => {
 	// the gate answered "the owner did not say the word" to both. A Turkish verb is almost never heard
 	// bare, so a stem has to match the mood glued onto it -- without letting an unrelated word that
 	// merely starts with the same three letters through.
+	// Heard live: "pardon, silme" -- do not delete -- and fifty more messages went. In Turkish the
+	// negative is built by gluing -ma/-me onto the verb, so the negated word CONTAINS the positive one
+	// and a prefix match finds it. Saying "do not" has to be the end of it.
+	it('does not read a negated verb as the command', () => {
+		setLocale('tr');
+		try {
+			const said = (text, words) => {
+				const a = new SpeakerAttribution({ ownerId: 'o' });
+				for (let i = 0; i < 30; i++) a.onFrame({ priority: true, active: ['o'], present: ['o'], sent: true });
+				a.noteTranscript(text, { startMs: 0, endMs: 900 });
+				return a.commandSpeaker(words);
+			};
+			const del = tList('keywords.words.delete');
+			const move = tList('keywords.words.move');
+			for (const text of ['pardon silme', 'sakin silme onu', 'silmeyin onlari']) {
+				assert.equal(said(text, del), null, `telling it NOT to must not open the gate: ${text}`);
+			}
+			assert.equal(said('onu tasima', move), null, 'the same for a stem entry');
+			// And the words that merely begin the same way are still the command: -meli is "should" and
+			// -mek is the infinitive, neither of them a negative.
+			for (const text of ['mesajlari sil', 'silmek istiyorum', 'silmeli miyiz']) {
+				assert.ok(said(text, del), `this one really is a request to delete: ${text}`);
+			}
+		} finally {
+			setLocale('en');
+		}
+	});
+
 	it('matches a Turkish command stem through its suffixes, and not through a look-alike word', () => {
 		setLocale('tr');
 		try {

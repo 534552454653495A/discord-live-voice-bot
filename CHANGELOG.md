@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] — 2026-09-14
+
+### Security
+
+- **"Do not delete" was read as "delete".** Turkish builds the negative by gluing -ma/-me straight onto
+  the verb, so the negated word contains the positive one and a prefix match finds it: "silme" starts
+  with "sil". Heard live, "pardon, silme" sat in the owner's words while fifty more messages went. A word
+  carrying the negative no longer counts as the command, in any keyword list, while the words that merely
+  begin the same way still do: -meli is "should" and -mek is the infinitive, and neither is a negative.
+
+### Fixed
+
+- **The neighbourhood a fragment is answered from is now the measured size.** The diagnostic added in
+  1.10.2 logged six of these with their numbers in one session: the fragment's window sat between 500 and
+  1000 ms past the last audio heard, so half a second missed five of the six. It is a second and a half
+  now. Widening it cannot put words in the wrong mouth, because a neighbourhood holding two voices still
+  names nobody.
+- **The model is told to actually call the tool when asked to play something**, not only when asked to
+  skip or stop. It had answered "starting it now" twice with nothing playing.
+
 ## [1.11.1] — 2026-09-14
 
 ### Fixed

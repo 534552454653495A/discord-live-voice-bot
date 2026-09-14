@@ -34,6 +34,11 @@ export default {
 	// a person ending alone is not enough, which is what keeps "cekler" and "atlar" out. Everything is
 	// matched against the normalised (ASCII, lower-case) tail, so "ı/i" and "u/ü" collapse into one.
 	// Words that do not fit -- "cekirdek", "cekingen", "gecen", "gecmis", "alan", "atlas" -- stay out.
+	// The negative in Turkish is -ma/-me glued straight onto the verb, so the negated word contains the
+	// positive one: "silme" (do not delete) starts with "sil" (delete). Matched against the tail AFTER a
+	// keyword; when it matches, the word does not count as the command. -meli/-mali (should) and
+	// -mek/-mak (the infinitive) begin the same way and are not negatives, so they are excluded.
+	negation: { pattern: '^m[ae](?![lk])', flags: 'u' },
 	inflection: {
 		pattern:
 			'^(?:[ea]bil|[iu]ver)?(?:(?:s[ea]n(?:[ea]|[iu]z[ea])?|s[iu]n(?:[iu]z)?|[iu]n(?:[iu]z)?|[ea]lim|[ea]yim|[ea]c[ea]k|[iu]yor|[eaiu]r|[dt][iu])(?:m|n|k|z|[iu]m|[iu]z|s[iu]n(?:[iu]z)?|l[ea]r)?)?$',

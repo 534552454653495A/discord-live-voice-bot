@@ -30,6 +30,8 @@ export default {
 	// Which tails a "=stem" gate keyword may pick up before it stops being that word. An English command
 	// is an imperative and hardly inflects, so only the third-person "s" is allowed: "takes" is still
 	// "take", while "taking" and "taken" are ordinary speech and must not open the gate.
+	// English negates with a separate word rather than a suffix, so there is no tail to recognise.
+	negation: { pattern: '', flags: 'u' },
 	inflection: { pattern: '^(?:s|es)?$', flags: 'u' },
 	// Owner-gate keywords: for an admin tool to run, the owner must have said one of these words.
 	// Matching is prefix based for words of 3+ letters ("ban" also matches "banned"), so stems are enough.

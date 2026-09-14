@@ -26,7 +26,11 @@ const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: n
 // How far outside a stretch to look when the stretch itself holds no audio at all. A fragment can land
 // in the pause between two of somebody's own words: Discord sends no packets while they draw breath, so
 // nothing is tracked there, and the honest answer is written just to either side of it.
-const NEAR_MS = 500;
+// The size is measured, not guessed: six of these were logged with their numbers in one live session
+// and the fragment's window sat between 500 and 1000 ms past the last audio heard, so half a second
+// missed five of the six. Widening it cannot put words in the wrong mouth, because a neighbourhood
+// holding two voices still names nobody.
+const NEAR_MS = 1500;
 
 const TURN_TTL_MS = 30_000; // the turn marker counts as stale after this long
 const UTTERANCE_GAP_MS = 1500; // fragments from the same person within this gap count as one utterance
@@ -56,14 +60,17 @@ function parseKeywords(keywords) {
 // person "s" to an imperative and little else, Turkish glues a whole mood onto the verb. Cached per
 // language; the pattern is read once and kept.
 const inflections = new Map();
-function inflectionFor() {
+const negations = new Map();
+function patternFor(key, cache) {
 	const code = locale();
-	if (!inflections.has(code)) {
-		const entry = tRaw('keywords.inflection');
-		inflections.set(code, entry?.pattern ? new RegExp(entry.pattern, entry.flags ?? 'u') : null);
+	if (!cache.has(code)) {
+		const entry = tRaw(key);
+		cache.set(code, entry?.pattern ? new RegExp(entry.pattern, entry.flags ?? 'u') : null);
 	}
-	return inflections.get(code);
+	return cache.get(code);
 }
+const inflectionFor = () => patternFor('keywords.inflection', inflections);
+const negationFor = () => patternFor('keywords.negation', negations);
 
 /**
  * How much this utterance counts as "somebody said something". Normally its token count, but a
@@ -77,11 +84,20 @@ function utteranceWeight(utt) {
 }
 
 function matchesNeedle(token, needle, stem) {
-	if (!stem && needle.length >= 3) return token.startsWith(needle);
-	if (token === needle) return true;
 	if (!token.startsWith(needle)) return false;
-	const tail = inflectionFor();
-	return Boolean(tail && tail.test(token.slice(needle.length)));
+	const tail = token.slice(needle.length);
+	// "Do not delete" must never read as "delete". In Turkish the negative is built by gluing -ma/-me
+	// straight onto the verb, so the negated word CONTAINS the positive one and a prefix match finds it:
+	// heard live, "pardon, silme" opened the gate and fifty more messages went. A word carrying the
+	// negative is not the command word, whichever way it was matched.
+	if (tail) {
+		const negative = negationFor();
+		if (negative && negative.test(tail)) return false;
+	}
+	if (!stem && needle.length >= 3) return true;
+	if (!tail) return true;
+	const allowed = inflectionFor();
+	return Boolean(allowed && allowed.test(tail));
 }
 
 export class SpeakerAttribution {
