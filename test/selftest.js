@@ -1753,24 +1753,34 @@ check('SpeakerAttribution: no run of frames lets a shared stretch of audio open 
 	// A property rather than an example: the arithmetic behind `solo` is a union over segments, and the
 	// kind of mistake that matters there (counting a shared frame as somebody's own) does not show up in
 	// any single hand-written case.
+	// The generator has to reach the regime under test. Frames drawn independently almost never leave the
+	// owner alone for four fifths of a stretch, so the gate never opened and every assertion below was
+	// skipped: the test passed by never testing anything. Here one person holds the floor for a stretch
+	// at a time and somebody else only sometimes joins in, which is what a conversation looks like, and
+	// the count at the end refuses to let it go quiet again.
 	let seed = 987654321;
 	const rnd = (n) => {
-		seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-		return seed % n;
+		seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+		return Math.floor(((seed >>> 16) / 65536) * n);
 	};
 	const cast = ['owner', 'x', 'y'];
+	let opened = 0;
 	for (let round = 0; round < 200; round++) {
 		const attribution = new SpeakerAttribution({ ownerId: 'owner' });
-		for (let frame = 0; frame < 60; frame++) {
-			const active = cast.filter(() => rnd(3) === 0);
-			attribution.onFrame({ active, sent: true });
+		let frame = 0;
+		while (frame < 60) {
+			const holder = cast[rnd(3)];
+			const guest = rnd(4) === 0 ? cast[rnd(3)] : null;
+			const length = 5 + rnd(20);
+			const active = guest && guest !== holder ? [holder, guest] : [holder];
+			for (let i = 0; i < length && frame < 60; i++, frame++) attribution.onFrame({ active, sent: true });
 		}
 		const from = rnd(800);
 		const to = from + 100 + rnd(600);
 		const share = attribution.speakerShareAt(from, to);
 		const owner = share.ranked.find((entry) => entry.id === 'owner');
-		const opened = attribution.speakerAt(from, to) === true;
-		if (!opened) continue;
+		if (attribution.speakerAt(from, to) !== true) continue;
+		opened++;
 		assert.ok(owner, `round ${round}: the gate opened with no owner audio at all`);
 		// The gate opened, so the owner was alone for at least 80% of it, which bounds everybody else at
 		// 20% by construction. Anyone above that share means the arithmetic is wrong.
@@ -1779,6 +1789,7 @@ check('SpeakerAttribution: no run of frames lets a shared stretch of audio open 
 			assert.ok(entry.share <= 0.2 + 1e-9, `round ${round}: ${entry.id} held ${entry.share} of a stretch the gate opened on`);
 		}
 	}
+	assert.ok(opened > 20, `the gate has to open sometimes or nothing is being tested: it opened ${opened} times in 200 rounds`);
 });
 
 check('SpeakerAttribution: a new session resets the audio position (no drift after a reconnect)', () => {

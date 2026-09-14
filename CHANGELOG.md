@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] — 2026-09-14
+
+### Changed
+
+- **Tests that were not testing what they claimed.** The rest of the adversarial review's findings, all
+  in the suite rather than the code. Two property tests drew their randomness from an arithmetic that
+  loses its low bits to floating point, so one branch of a coin flip came up once in two hundred draws
+  instead of once in two, and the array surgery they exist to guard was almost never executed. The gate
+  property test never once reached a state where the gate opens, so every assertion in it was skipped;
+  it now shapes its input like a conversation and refuses to pass unless the gate opened at least twenty
+  times. The line cap test was satisfied by the ordinary silence timer rather than the cap. Four rules
+  had no test at all: the bridging pass in the run grouper, the punctuation half of "never cut inside a
+  word", the announcement guard for a frame with two voices in it, and the refusal to run a command off a
+  line that is only mostly one person's. A line's turn is now its own method so that it can be asserted
+  on directly rather than through a stub.
+
 ## [1.9.0] — 2026-09-14
 
 Five findings from an adversarial review of the per-speaker attribution work. Thirty-six agents across

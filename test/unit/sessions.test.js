@@ -176,6 +176,16 @@ describe('speaker announcements', () => {
 		hold('a');
 		hold('b');
 		hold('c'); // the third speaker makes the channel crowded, so this one is not announced
+		const announced = said.length;
+		// An ambiguous frame announces nobody: this writes to the channel the model treats as hard fact,
+		// so naming one of two voices here is the most expensive version of getting a speaker wrong. The
+		// frame is neither counted towards a candidate nor treated as silence -- the announcement waits.
+		const candidate = session.sentCandidate;
+		const frames = session.sentCandidateFrames;
+		for (let index = 0; index < 8; index++) session.trackSentSpeaker({ priority: false, active: ['a', 'b'], sent: true });
+		assert.equal(said.length, announced, 'two voices in one frame announce nobody');
+		assert.equal(session.sentCandidate, candidate, 'and the frame does not become anybody s evidence');
+		assert.equal(session.sentCandidateFrames, frames);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.equal(said.length, 2, 'only the first two are announced');
 		assert.notEqual(session.lastAnnouncedUser, 'c', 'an announcement that was skipped must not be recorded as made');

@@ -60,11 +60,28 @@ describe('one flush, one line per speaker', () => {
 		);
 	});
 
-	it('carries one voice across a short hole nobody could identify', () => {
+	it('folds away a hole too short to be anything', () => {
+		// 120 ms: this never reaches the bridging rule, it is folded as a run too short to be a turn. Kept
+		// as its own case because the two rules produce the same answer here for different reasons.
 		const runs = buildRuns([part('bu sarkiyi ', 'a', 0, 800), part('hmm ', null, 800, 920), part('acsana', 'a', 920, 1600)]);
 		assert.equal(runs.length, 1);
 		assert.equal(runs[0].id, 'a');
 		assert.equal(runText(runs[0]), 'bu sarkiyi hmm acsana');
+	});
+
+	it('carries one voice across a hole long enough to be a run of its own', () => {
+		// 350 ms is past the "too short to be a turn" floor and inside the bridge, so this is the only case
+		// that actually exercises the bridging pass.
+		const runs = buildRuns([part('bu sarkiyi ', 'a', 0, 800), part('hmmm ', null, 800, 1150), part('acsana', 'a', 1150, 1900)]);
+		assert.equal(runs.length, 1, 'one person talking through a noise nobody could place');
+		assert.equal(runs[0].id, 'a');
+		assert.equal(runText(runs[0]), 'bu sarkiyi hmmm acsana');
+		assert.equal(runs[0].mixed, true, 'and it carries something that was not provably theirs');
+	});
+
+	it('does not carry a voice across a hole longer than the bridge', () => {
+		const runs = buildRuns([part('bu sarkiyi ', 'a', 0, 800), part('hmmmmm ', null, 800, 1300), part('acsana', 'a', 1300, 2100)]);
+		assert.equal(runs.length, 3, 'half a second of nobody-knows-who stands on its own');
 	});
 
 	it('does not carry a voice across a long unidentified stretch', () => {
@@ -89,6 +106,20 @@ describe('one flush, one line per speaker', () => {
 		assert.equal(runs[0].mixed, true, 'and still may not be acted on');
 	});
 
+	it('cuts where the next fragment starts with punctuation, even without a space before it', () => {
+		// The other half of the "never cut inside a word" rule: a fragment opening with punctuation is a
+		// safe place to cut however the previous one ended.
+		const runs = buildRuns([part('evet', 'a', 0, 500), part(', tamam', 'b', 500, 1000)]);
+		assert.deepEqual(shape(runs), [
+			{ id: 'a', text: 'evet', mixed: false },
+			{ id: 'b', text: ', tamam', mixed: false },
+		]);
+		// The twin: a letter instead of punctuation, and the two stay glued.
+		const glued = buildRuns([part('evet', 'a', 0, 500), part('tamam', 'b', 500, 1000)]);
+		assert.equal(glued.length, 1);
+		assert.equal(glued[0].mixed, true);
+	});
+
 	it('does not let a whitespace delta open a run or change the speaker', () => {
 		const runs = buildRuns([part('bir ', 'a', 0, 400), part(' ', null, 400, 420), part('iki', 'a', 420, 900)]);
 		assert.equal(runs.length, 1);
@@ -104,12 +135,18 @@ describe('one flush, one line per speaker', () => {
 	// The one that guards all the rest: every fold, bridge and coalesce is an array splice, and a splice
 	// is exactly where text gets dropped, duplicated or reordered without anybody noticing.
 	it('never loses, duplicates or reorders a delta, over five hundred random inputs', () => {
+		// The generator matters as much as the property. A plain `seed * 1103515245` loses its low bits to
+		// floating point, which made rnd(2) return 1 once in two hundred draws instead of once in two: the
+		// inputs almost never had a trailing space, so almost nothing was ever cut into two runs and the
+		// splices this test exists to guard were never executed. imul keeps the arithmetic exact and the
+		// high bits are the ones that are actually random.
 		let seed = 12345;
 		const rnd = (n) => {
-			seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-			return seed % n;
+			seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+			return Math.floor(((seed >>> 16) / 65536) * n);
 		};
 		const ids = ['a', 'b', null];
+		let multiRun = 0;
 		for (let round = 0; round < 500; round++) {
 			const parts = [];
 			let clock = 0;
@@ -122,6 +159,7 @@ describe('one flush, one line per speaker', () => {
 				clock += span;
 			}
 			const runs = buildRuns(parts);
+			if (runs.length > 1) multiRun++;
 			const flat = runs.flatMap((run) => run.parts);
 			assert.deepEqual(
 				flat.map((entry) => entry.text),
@@ -129,5 +167,8 @@ describe('one flush, one line per speaker', () => {
 				`round ${round}: every delta survives exactly once, in order`,
 			);
 		}
+		// Without this the test could pass on five hundred single-run inputs and prove nothing about the
+		// folding, bridging and coalescing it is here to cover.
+		assert.ok(multiRun > 100, `the inputs have to reach the interesting shapes: only ${multiRun} of 500 produced more than one run`);
 	});
 });

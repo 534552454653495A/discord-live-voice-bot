@@ -102,8 +102,13 @@ function makeRoomSession({ names, ...env } = {}) {
 		activity.events
 			.filter((event) => event.kind === 'voice' && event.direction === 'in')
 			.map((event) => ({ who: event.who, text: event.text }));
+	/** The same lines with the uncertainty the record carries alongside them. */
+	const spokenMeta = () =>
+		activity.events
+			.filter((event) => event.kind === 'voice' && event.direction === 'in')
+			.map((event) => ({ who: event.who, unclear: event.meta?.unclear ?? false, speakers: event.meta?.speakers ?? null }));
 	const flush = () => session.flushTranscript('user');
-	return { session, cfg, told, logged, voices, quiet, at, delta, flush, lines, spoken, commanded, activity };
+	return { session, cfg, told, logged, voices, quiet, at, delta, flush, lines, spoken, spokenMeta, commanded, activity };
 }
 
 describe('two people with the same display name', () => {
@@ -189,6 +194,69 @@ describe('who the model is told said a line', () => {
 		);
 	});
 
+	it('records the uncertainty of a tangled line, and tells the model no name at all', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		// One clean line first, so that there is a name on the record to go stale.
+		room.voices('guest', 40);
+		room.delta('once ben', 0, 800);
+		t.mock.timers.tick(1300);
+		assert.equal(room.session.lastAnnouncedUser, 'guest');
+
+		room.voices(['owner', 'guest'], 50);
+		room.delta('sonra ikimiz', 800, 1800);
+		t.mock.timers.tick(1300);
+
+		assert.deepEqual(room.spokenMeta().at(-1), {
+			who: null,
+			unclear: true,
+			speakers: ['guest', 'owner'],
+		});
+		assert.equal(room.session.lastAnnouncedUser, 'guest', 'the model was told no name, so none has been remembered');
+	});
+
+	it('refuses to run a command off a line that is only mostly one person s', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		// 600 ms alone then 800 ms shared: the owner holds three sevenths of it on their own, which is
+		// enough to be the likeliest voice and not enough to be the only one.
+		room.voices('owner', 30);
+		room.voices(['owner', 'guest'], 40);
+		room.delta('melisi banla', 0, 1400);
+		t.mock.timers.tick(1300);
+
+		const item = room.commanded.at(-1);
+		assert.equal(item.id, 'owner', 'the line still carries the likeliest name');
+		assert.equal(item.mixed, true);
+		const before = room.logged.length;
+		GuildSession.prototype.runVoiceCommand.call(room.session, item);
+		assert.ok(
+			room.logged.slice(before).some((line) => /not run/.test(line)),
+			'and the real guard refuses it because the line is mixed, not because it has no name',
+		);
+	});
+
+	it('gives a line the turn of its own last position', () => {
+		const room = makeRoomSession();
+		assert.equal(room.session.lineTurn({ endMs: 900 }).audioMs, 900);
+		assert.equal(room.session.lineTurn({ endMs: 1800 }).audioMs, 1800);
+		// No position at all: the current head of the audio is the only honest answer.
+		room.voices('guest', 10);
+		assert.equal(room.session.lineTurn({ endMs: null }).audioMs, room.at());
+	});
+
+	it('finishes the half-said line when the session is stopped', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession();
+		room.voices('guest', 30);
+		room.delta('yarim kalan', 0, 600);
+		room.session.stop();
+		assert.deepEqual(room.spoken(), [{ who: 'guest', text: 'yarim kalan' }]);
+		assert.equal(room.session.transcriptBuffers.size, 0, 'and no timer is left armed on a buffer nobody owns');
+		t.mock.timers.tick(2000);
+		assert.equal(room.spoken().length, 1, 'nor is it recorded twice');
+	});
+
 	it('gives each line its own end position, so one speaker cannot borrow another line s turn', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession();
@@ -210,14 +278,21 @@ describe('who the model is told said a line', () => {
 	});
 
 	it('stops waiting for silence once a line has run too long', (t) => {
-		t.mock.timers.enable({ apis: ['setTimeout'] });
+		// The silence timer is left at its real length on purpose: a delta arrives every second, so that
+		// timer never fires and the only thing that can close this line is the cap. The previous version of
+		// this test ticked straight past 1200 ms, so it was the ordinary timer being measured, not the cap.
+		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
 		const room = makeRoomSession();
-		room.voices('guest', 10);
-		room.delta('bir ', 0, 200);
-		t.mock.timers.tick(9000); // the flush timer would have fired; the point is what happens next
-		room.voices('guest', 10);
-		room.delta('iki', 200, 400);
-		assert.ok(room.spoken().length >= 1, 'the line did not wait for the room to fall silent');
+		let position = 0;
+		for (let i = 0; i < 10; i++) {
+			room.voices('guest', 15);
+			room.delta(`soz${i} `, position, position + 300);
+			position += 300;
+			if (room.spoken().length) break;
+			t.mock.timers.tick(1000); // under the 1200 ms silence timer, so it is re-armed rather than fired
+		}
+		assert.equal(room.spoken().length, 1, 'the line closed on the cap, without the room ever falling silent');
+		assert.ok(room.spoken()[0].text.split(' ').length >= 8, `and it holds what was said: ${room.spoken()[0].text}`);
 	});
 
 	it('finishes the half-said line before the audio timeline restarts', (t) => {

@@ -1344,6 +1344,18 @@ export class GuildSession {
 		};
 	}
 
+	/**
+	 * The turn a line's command acts under: the line's OWN last audio position.
+	 *
+	 * Reusing the whole flush's final position would let a LATER speaker's audio count as "before the
+	 * turn" for an EARLIER line's command, which is the widest possible window and exactly the hole the
+	 * gate exists to close. A position the API reports out of order can only make this earlier, which is
+	 * the strict direction.
+	 */
+	lineTurn(item) {
+		return { at: Date.now(), audioMs: Number.isFinite(item.endMs) ? item.endMs : this.attribution.audioMs };
+	}
+
 	/** A finished line may run a voice command. A line that is not provably one person's may not. */
 	runVoiceCommand(item) {
 		// parseVoiceCommand matches whole-line patterns and does not care who spoke, so on a mixed line one
@@ -1356,10 +1368,7 @@ export class GuildSession {
 		}
 		const command = parseVoiceCommand(item.line, this.store.list(), this.channelLists());
 		if (!command) return;
-		// This LINE's own turn, from its own last position. Reusing the whole flush's final position would
-		// let a LATER speaker's audio count as "before the turn" for an EARLIER line's command, which is the
-		// widest possible window and exactly the hole the gate exists to close.
-		const lineTurn = { at: Date.now(), audioMs: Number.isFinite(item.endMs) ? item.endMs : this.attribution.audioMs };
+		const lineTurn = this.lineTurn(item);
 		const speakerId = String(item.id);
 		void executeAction(command, {
 			...this.taskDeps,
