@@ -12,6 +12,8 @@ export default {
 	speaker_line_overlap: 'In the channel {names} spoke over each other and I cannot tell which of them said this: "{line}"',
 	window_shape_cumulative: '[transcript] the windows are cumulative: {straddled} of {total} fragments carried the previous one, so each is judged on the audio that is new since the last',
 	window_shape_per_fragment: '[transcript] the windows are per fragment: {straddled} of {total} overlapped the previous one',
+	speaker_line_unknown: 'Somebody in the channel said this and the audio does not say who: "{line}"',
+	log_context_unknown: '[context] no audio under these words: "{line}"',
 	log_context_overlap: '[context] two voices at once ({names}): "{line}"',
 	log_command_unclear: '[command] not run, the line is not safely one person: "{line}"',
 	name_with_account: '{name} (the account {account})',

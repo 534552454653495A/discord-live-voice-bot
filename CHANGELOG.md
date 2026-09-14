@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-09-14
+
+### Fixed
+
+- **"Two voices at once" was usually neither.** The diagnostic added in 1.9.2 gave it away on its first
+  live run: the message named no candidates at all, which only happens when there was no audio recorded
+  under those words. Discord sends no packets while somebody draws breath, so nothing is tracked in the
+  pause between two of their own words, and a fragment landing there had nothing to resolve against. A
+  fragment in a pause is now answered from the audio on either side of it, and only from the audio of one
+  person: a pause between two different people still names nobody, and now names them as the candidates
+  rather than saying "somebody". The two cases are also said differently, because they are different
+  things to fix.
+- **Inference never opens the gate.** An answer taken from around a pause carries a reason saying so, and
+  the owner gate reads only answers taken from the audio under the words themselves. A tangled stretch
+  answers "not the owner" rather than "no information", so it cannot fall through to the looser
+  frame-level test. That fall-through was introduced by this change and caught by two existing tests.
+
+### Note
+
+- The windows on transcript fragments turn out to be **per fragment**, not cumulative: the probe added in
+  1.9.2 reported nought out of twenty-four carrying the previous one. The 1.8.3 clamp is therefore a
+  no-op in practice. It stays, because it costs nothing and is the correct handling if the shape ever
+  changes, but the reasoning that motivated it was wrong.
+
 ## [1.9.2] — 2026-09-14
 
 ### Added

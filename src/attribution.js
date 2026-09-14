@@ -23,6 +23,10 @@ const NAME_LEAN = 0.25;
 // construction, so this one constant does the whole job.
 const GATE_SOLO = 0.8;
 const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: null, share: 0, speakers: 0 });
+// How far outside a stretch to look when the stretch itself holds no audio at all. A fragment can land
+// in the pause between two of somebody's own words: Discord sends no packets while they draw breath, so
+// nothing is tracked there, and the honest answer is written just to either side of it.
+const NEAR_MS = 500;
 
 const TURN_TTL_MS = 30_000; // the turn marker counts as stale after this long
 const UTTERANCE_GAP_MS = 1500; // fragments from the same person within this gap count as one utterance
@@ -281,18 +285,36 @@ export class SpeakerAttribution {
 	/**
 	 * Who said the fragment covering this stretch, and how sure we are.
 	 *   'sure'    - one voice held it on its own: safe to name and, if it is the owner, safe to act on
-	 *   'leaning' - one voice is ahead but somebody else was in the audio too: safe to put on a
-	 *               transcript line, never safe to act on
-	 *   'unsure'  - the voices are tangled, or there is no record at all: name nobody
+	 *   'leaning' - one voice is ahead but somebody else was in the audio too, or the answer came from
+	 *               just outside the stretch: safe to put on a transcript line, never safe to act on
+	 *   'unsure'  - the voices are tangled, or there is nothing to go on: name nobody
+	 *
+	 * `reason` says where the answer came from, and the gate reads it: 'direct' means this stretch of
+	 * audio itself, 'nearby' means the audio around a pause, 'silence' means there was nothing at all.
+	 * Only 'direct' is evidence about who said these words; the other two are inference about whose turn
+	 * it was, which is enough to put a name on a line and never enough to act on one.
 	 */
 	resolveSpeaker(startMs, endMs) {
-		const { heardMs, ranked } = this.speakerShareAt(startMs, endMs);
-		if (!ranked.length) return { id: null, confidence: 'unsure', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };
+		const direct = this.speakerShareAt(startMs, endMs);
+		if (direct.ranked.length) return this._rank(direct, 'direct');
+		// Nothing in the stretch at all. Before calling that an overlap -- which it is not, and which is
+		// what the bot was telling people -- look at the audio on either side of it.
+		if (!Number.isFinite(startMs)) return { id: null, confidence: 'unsure', reason: 'silence', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };
+		const to = Number.isFinite(endMs) && endMs > startMs ? endMs : startMs;
+		const near = this.speakerShareAt(startMs - NEAR_MS, to + NEAR_MS);
+		if (!near.ranked.length) return { id: null, confidence: 'unsure', reason: 'silence', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };
+		const ranked = this._rank(near, 'nearby');
+		// One voice either side of the pause is that voice's pause. Two voices either side says nothing.
+		return ranked.confidence === 'sure' ? { ...ranked, confidence: 'leaning' } : { ...ranked, id: null, confidence: 'unsure' };
+	}
+
+	_rank({ heardMs, ranked }, reason) {
 		const top = ranked[0];
 		const confidence = top.solo >= NAME_SOLO ? 'sure' : top.solo >= NAME_LEAN ? 'leaning' : 'unsure';
 		return {
-			id: top.id,
+			id: confidence === 'unsure' ? null : top.id,
 			confidence,
+			reason,
 			solo: top.solo,
 			share: top.share,
 			speakers: ranked.length,
@@ -312,7 +334,10 @@ export class SpeakerAttribution {
 	 */
 	speakerAt(startMs, endMs) {
 		const hit = this.resolveSpeaker(startMs, endMs);
-		if (!hit.id) return null;
+		// Only the audio under these words can say whose words they are. An answer inferred from the audio
+		// around a pause is enough to put a name on a transcript line and is not evidence about a command.
+		if (hit.reason !== 'direct' || !hit.ids.length) return null; // nothing to go on: not the same as "no"
+		// There WAS audio here. Whether it names the owner or nobody, the answer is a definite one.
 		return hit.solo >= GATE_SOLO && hit.id === this.ownerId;
 	}
 
@@ -372,12 +397,15 @@ export class SpeakerAttribution {
 		const owner =
 			typeof ownerOverride === 'boolean'
 				? ownerOverride
-				: hit.id === null
-					? this.ownerSpeakingNow() // no record at all: a gap, or a delta from before a reconnect
-					: hit.solo >= GATE_SOLO && hit.id === this.ownerId;
+				: hit.reason === 'direct' && hit.ids.length
+					// There was audio under these words. It either was the owner alone or it was not, and a
+					// tangled stretch answers "not" -- falling back to the frame-level test here would hand the
+					// owner's authority to an overlap, which is the whole thing this is guarding.
+					? hit.solo >= GATE_SOLO && hit.id === this.ownerId
+					: this.ownerSpeakingNow(); // inferred, or nothing at all: fall back on the frame-level test
 		// The name we are willing to put on it. 'leaning' is enough for a transcript line and never for
 		// the gate, which reads `owner` above and is the stricter test.
-		const id = hit.confidence === 'unsure' ? null : (hit.id ?? null);
+		const id = hit.id ?? null;
 		const sure = hit.confidence === 'sure';
 		// Was the owner's voice in this audio at all? Kept apart from `owner`, which is the question of
 		// whose WORD it is. In a real overlap nobody can be named, so without this the refusal could not
@@ -397,7 +425,18 @@ export class SpeakerAttribution {
 		this._noteUtterance({ owner, id, sure, at, seq, startMs: pos, endMs: end, text: fragment, tokens });
 		// Handed back so that the caller builds its line out of the SAME answer. Resolving the track
 		// again downstream is how two parts of the code ended up disagreeing about who was talking.
-		return { id, owner, sure, ownerIn, confidence: hit.confidence, solo: hit.solo, share: hit.share, speakers: hit.speakers, ids: hit.ids };
+		return {
+			id,
+			owner,
+			sure,
+			ownerIn,
+			confidence: hit.confidence,
+			reason: hit.reason ?? 'silence',
+			solo: hit.solo,
+			share: hit.share,
+			speakers: hit.speakers,
+			ids: hit.ids,
+		};
 	}
 
 	_noteUtterance({ owner, id, sure = true, at, seq, startMs, endMs, text, tokens }) {

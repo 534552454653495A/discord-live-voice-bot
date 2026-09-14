@@ -1359,10 +1359,10 @@ export class GuildSession {
 		const span = runSpan(run);
 		const hit = span ? this.attribution.resolveSpeaker(span[0], span[1]) : null;
 		// No position on any part (or nothing in the track for it): fall back on what the deltas said.
-		if (!hit || hit.heardMs <= 0) return { id: run.id, mixed: run.mixed, candidates: runCandidates(run) };
+		if (!hit || (hit.heardMs <= 0 && !hit.id)) return { id: run.id, mixed: run.mixed, candidates: runCandidates(run) };
 		const candidates = hit.ids.length ? hit.ids : runCandidates(run);
 		return {
-			id: hit.confidence === 'unsure' ? null : hit.id,
+			id: hit.id ?? null,
 			// A run that swallowed somebody else's words stays mixed however clean the audio looks: the
 			// text really does hold two people.
 			mixed: run.mixed || hit.confidence !== 'sure',
@@ -1415,11 +1415,15 @@ export class GuildSession {
 	announceLine({ line, id, mixed, candidates }) {
 		const clipped = safeContext(line).slice(0, 200);
 		if (!id) {
-			// Two voices ran into each other here. Naming one of them would be a guess, and the assistant acts
-			// on these lines, so it is the expensive kind of guess.
-			const names = candidates.length
-				? candidates.map((candidate) => safeContext(this.speakerLabel(candidate))).join(t('runtime.name_join'))
-				: t('runtime.someone');
+			// Two different things end up here and they were being reported as the same one. Candidates
+			// means two voices really did run into each other. No candidates means there was no audio under
+			// these words at all, which is a different sentence to say and a different thing to fix.
+			if (!candidates.length) {
+				this.live.appendContext('thinking', t('runtime.speaker_line_unknown', { line: clipped }));
+				if (this.cfg.transcripts) this.log(t('runtime.log_context_unknown', { line: line.slice(0, 40) }));
+				return;
+			}
+			const names = candidates.map((candidate) => safeContext(this.speakerLabel(candidate))).join(t('runtime.name_join'));
 			this.live.appendContext('thinking', t('runtime.speaker_line_overlap', { names, line: clipped }));
 			// Naming them in the log too: "two voices at once" on its own says nothing about whether the
 			// judgement was right, and this log is the only evidence there is after the fact.

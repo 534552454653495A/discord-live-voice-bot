@@ -107,6 +107,49 @@ describe('the gate in front of the admin tools', () => {
 		assert.equal(last?.tokens, 0, 'and it counts even though not one letter of it survives normalising');
 	});
 
+	// Live failure: the bot was telling people "two voices at once" on nearly every short line, and the
+	// log gave it away by naming no candidates at all. There was no overlap. Discord sends no packets while
+	// somebody draws breath, so nothing is tracked there, and a fragment landing in that pause had no audio
+	// under it. The answer is written on either side of the pause.
+	it('answers a fragment that lands in one person s own pause', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		frames(a, ['guest'], 30); // 0 - 600 ms
+		frames(a, [], 20); // a pause: no packets, so nothing is tracked
+		frames(a, ['guest'], 30); // 1000 - 1600 ms
+		const hit = a.resolveSpeaker(620, 980);
+		assert.equal(hit.id, 'guest', 'the pause between two of their words is theirs');
+		assert.equal(hit.reason, 'nearby');
+		assert.equal(hit.confidence, 'leaning', 'inferred from around it, so never certain');
+		// And inference is never evidence about a command.
+		assert.equal(a.speakerAt(620, 980), null, 'the gate has nothing to go on here');
+	});
+
+	it('names nobody for a pause between two different people, but says who they were', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		frames(a, ['x'], 30);
+		frames(a, [], 20);
+		frames(a, ['y'], 30);
+		const hit = a.resolveSpeaker(620, 980);
+		assert.equal(hit.id, null, 'the handover could have been either of them');
+		assert.deepEqual(hit.ids.sort(), ['x', 'y'], 'and both are named, rather than "somebody"');
+	});
+
+	it('says there is nothing to go on when there really is nothing', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		const hit = a.resolveSpeaker(0, 400);
+		assert.equal(hit.reason, 'silence');
+		assert.deepEqual(hit.ids, []);
+		assert.equal(a.speakerAt(0, 400), null);
+	});
+
+	it('an overlap answers no rather than answering nothing', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		frames(a, ['owner', 'guest'], 30);
+		// There WAS audio here, so the gate gets a definite answer. Falling back to the frame-level test
+		// would hand the owner's authority to whoever talked over them.
+		assert.equal(a.speakerAt(0, 600), false);
+	});
+
 	it('opens on the priority path, where the mixer has already thrown the other voices away', () => {
 		const a = new SpeakerAttribution({ ownerId: 'owner' });
 		// The owner holds the floor: the mixer discarded everybody else's audio before summing this frame.
