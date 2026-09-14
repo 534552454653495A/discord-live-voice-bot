@@ -60,10 +60,10 @@ export class AudioBridge {
 
 	/** Runs exactly one 20 ms step. Returns what happened (used by tests). */
 	tick() {
-		const { pcm, active, priority } = this.mixer.tick();
+		const { pcm, active, present, priority } = this.mixer.tick();
 		const live = this.getLive();
 		const sent = Boolean(live?.ready && live.sendAudio(pcm));
-		this.onFrame?.({ priority, active, sent });
+		this.onFrame?.({ priority, active, present, sent });
 		if (this.debug && active.length > 0) {
 			const key = active.join(',');
 			if (key !== this.lastActive) this.log(t('voice.speaking', { ids: key }));

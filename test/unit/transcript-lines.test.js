@@ -299,6 +299,54 @@ describe('who the model is told said a line', () => {
 		);
 	});
 
+	// Three independent reviewers found the same hole: a line that holds a piece of somebody else's words
+	// was handed to the model under one confident name. The application refuses to run a command off such
+	// a line, but the model answers it and could not see what we knew about it.
+	it('tells the model when a line holds somebody else s words too', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		room.voices('guest', 40);
+		// A 100 ms interjection from the third person: too short to be a turn, so it is folded in and the
+		// line stops being purely one person's.
+		room.voices('third', 5);
+		room.voices('guest', 40);
+		room.delta('bunu ', 0, 800);
+		room.delta('he ', 800, 900);
+		room.delta('yapalim', 900, 1700);
+		t.mock.timers.tick(1300);
+
+		const said = room.lines();
+		assert.equal(said.length, 1, said.join(' | '));
+		assert.match(said[0], /Adem/, 'the line still carries the likeliest name');
+		assert.match(said[0], /karışmış|run into/, 'and says somebody else may be in it');
+		assert.deepEqual(
+			room.commanded.map((item) => item.mixed),
+			[true],
+			'and the command shortcut still refuses it',
+		);
+	});
+
+	// A review finding: the eight second cap fired on whichever fragment happened to arrive, so it could
+	// split "banla" into "ban" and "la" -- and then the command parser recognises neither half.
+	it('waits for a word to finish before closing an overlong line', (t) => {
+		// Date as well as setTimeout: the cap is measured against the wall clock, so the clock has to move.
+		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+		const room = makeRoomSession();
+		room.session.cfg.transcriptFlushMs = 60_000; // the silence timer is not what is under test here
+		room.voices('guest', 20);
+		room.delta('bir ', 0, 400);
+		t.mock.timers.tick(8500); // past the cap
+		room.voices('guest', 20);
+		room.delta('ban', 400, 800); // mid-word: the line must not be closed here
+		assert.deepEqual(room.spoken(), [], 'nothing is recorded in the middle of a word');
+		room.delta('la ', 800, 1000); // the word is finished: now it may close
+		assert.deepEqual(
+			room.spoken().map((entry) => entry.text),
+			['bir banla'],
+			'and the word arrives in one piece',
+		);
+	});
+
 	it('keeps the owner as the owner while somebody else has a microphone open', (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout'] });
 		const room = makeRoomSession();

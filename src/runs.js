@@ -67,6 +67,14 @@ export function runCandidates(run) {
  * word. Deltas are sub-word, so a handover can land mid-word, and "ban Da" / "na" is a worse answer
  * than one line carrying two names: it also stops the command parser recognising either half.
  */
+/**
+ * May a line END after this fragment? Same question as canCut, with nothing after it to look at: used
+ * where a line is closed on a timer rather than because the speaker changed.
+ */
+export function canEndAfter(text) {
+	return /[\s.,!?;:…"')\]]$/u.test(String(text ?? ''));
+}
+
 function canCut(prevText, text) {
 	if (!prevText) return true;
 	return /\s$/u.test(prevText) || /^[\s.,!?;:…"')\]]/u.test(text);

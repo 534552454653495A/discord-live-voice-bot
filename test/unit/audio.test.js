@@ -4,6 +4,7 @@ import { Writable } from 'node:stream';
 import { PlaybackQueue, Ring, SAMPLES_PER_FRAME_24K, SpeakerMixer, STEREO_SAMPLES_PER_FRAME_48K, mixInto, peakOf } from '../../src/audio.js';
 import { AudioBridge } from '../../src/bridge.js';
 import { Ducker } from '../../src/music.js';
+import { SpeakerAttribution } from '../../src/attribution.js';
 
 const sink = () => {
 	const written = [];
@@ -73,6 +74,20 @@ describe('audio.js', () => {
 		assert.deepEqual([...new Set(seen.slice(4))], ['speaker'], 'the floor must not change hands inside a sentence');
 	});
 
+	// A review finding: holding somebody in the list on "spoke recently" alone wrote a stale second name
+	// onto the first fragment of the next person's turn, which is what made a handover read as an overlap.
+	it('drops a speaker whose packets have stopped, without waiting out the whole hold', () => {
+		const m = new SpeakerMixer();
+		const speech = new Int16Array(480).fill(3000);
+		for (let i = 0; i < 6; i++) {
+			m.push('a', speech);
+			m.tick();
+		}
+		assert.deepEqual(m.tick().active, ['a'], 'one frame without a packet is jitter');
+		for (let i = 0; i < 5; i++) m.tick(); // 100 ms of nothing arriving at all
+		assert.deepEqual(m.tick().active, [], 'a speaker who has stopped transmitting has stopped talking');
+	});
+
 	it('hands the room over once the speaker really stops', () => {
 		const m = new SpeakerMixer();
 		const speech = new Int16Array(480).fill(3000);
@@ -106,6 +121,49 @@ describe('audio.js', () => {
 		}
 		assert.equal(frame.priority, false, 'the room is handed back');
 		assert.ok(frame.active.includes('x'), 'and the person now talking is the one on the line');
+	});
+
+	// The worst finding of the adversarial review, and it is an attack, not an accident: speak quietly
+	// enough to stay under the speech bar and your voice is still summed into the frame the model
+	// transcribes, while the frame is recorded as holding one person, alone. Your words then land under
+	// their name, with their authority.
+	it('counts a voice too quiet to be called speech as being in the frame all the same', () => {
+		const m = new SpeakerMixer();
+		const speech = new Int16Array(480).fill(3000);
+		const murmur = new Int16Array(480).fill(260); // above "there is real sound here", below speech
+		let frame = null;
+		for (let i = 0; i < 6; i++) {
+			m.push('owner', speech);
+			m.push('attacker', murmur);
+			frame = m.tick();
+		}
+		assert.deepEqual(frame.active, ['owner'], 'only one of them is speaking');
+		assert.deepEqual(frame.present.sort(), ['attacker', 'owner'], 'but both of them are in the sound');
+	});
+
+	it('does not let a murmur under the speech bar open the owner gate', () => {
+		const m = new SpeakerMixer();
+		const attribution = new SpeakerAttribution({ ownerId: 'owner' });
+		const speech = new Int16Array(480).fill(3000);
+		const murmur = new Int16Array(480).fill(260);
+		for (let i = 0; i < 40; i++) {
+			m.push('owner', speech);
+			m.push('attacker', murmur);
+			const frame = m.tick();
+			attribution.onFrame({ priority: frame.priority, active: frame.active, present: frame.present, sent: true });
+		}
+		assert.equal(attribution.speakerAt(0, 800), false, 'a frame with two voices in it cannot say whose word it was');
+		assert.equal(attribution.noteTranscript('ban dana', { startMs: 0, endMs: 800 }).owner, false);
+
+		// The same run of frames with nobody murmuring does open it, so the test is about the murmur.
+		const clean = new SpeakerMixer();
+		const alone = new SpeakerAttribution({ ownerId: 'owner' });
+		for (let i = 0; i < 40; i++) {
+			clean.push('owner', speech);
+			const frame = clean.tick();
+			alone.onFrame({ priority: frame.priority, active: frame.active, present: frame.present, sent: true });
+		}
+		assert.equal(alone.speakerAt(0, 800), true);
 	});
 
 	it('reports the absolute peak and clips the mix at the int16 ceiling', () => {

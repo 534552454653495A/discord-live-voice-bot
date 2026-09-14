@@ -61,6 +61,17 @@ function inflectionFor() {
 	return inflections.get(code);
 }
 
+/**
+ * How much this utterance counts as "somebody said something". Normally its token count, but a
+ * sentence whose letters normalize() cannot represent still counts as one thing said: it is real
+ * speech from a real person, and the checks that look for an interjection have to see it.
+ */
+function utteranceWeight(utt) {
+	if (utt.tokens.length) return utt.tokens.length;
+	const letters = String(utt.text ?? '').replace(/[\s.,!?;:…"'()[\]-]+/gu, '');
+	return letters.length >= 2 ? 1 : 0;
+}
+
 function matchesNeedle(token, needle, stem) {
 	if (!stem && needle.length >= 3) return token.startsWith(needle);
 	if (token === needle) return true;
@@ -121,7 +132,7 @@ export class SpeakerAttribution {
 	 * Called for every 20 ms audio frame (from the bridge).
 	 * `sent` = was the frame really appended to the Live session; the audio position only advances then.
 	 */
-	onFrame({ priority = false, active = [], sent = true } = {}) {
+	onFrame({ priority = false, active = [], present = null, sent = true } = {}) {
 		this.seq++;
 		const activeIds = active.map((id) => String(id));
 		const ownerInMix = !priority && this.ownerId ? activeIds.includes(this.ownerId) : false;
@@ -145,11 +156,16 @@ export class SpeakerAttribution {
 		// On the priority path the mixer physically discarded everybody else's audio before the frame was
 		// summed, so the frame really does hold one voice: that is a fact about the audio, not a guess.
 		const ids = priority ? (this.ownerId ? [this.ownerId] : activeIds.slice(0, 1)) : activeIds;
-		this._track(this.audioMs, this.audioMs + this.frameMs, ids);
+		// Who was IN the frame is a different list from who was speaking in it, and a stricter one: a voice
+		// too quiet to clear the speech bar is still summed into the audio the model transcribes. "Alone"
+		// has to mean alone in the sound, or somebody can speak quietly and have their words land under
+		// another person's name, with that person's authority.
+		const presentIds = Array.isArray(present) ? present.map((id) => String(id)) : ids;
+		this._track(this.audioMs, this.audioMs + this.frameMs, ids, presentIds);
 		this.audioMs += this.frameMs;
 	}
 
-	_track(startMs, endMs, ids) {
+	_track(startMs, endMs, ids, presentIds = ids) {
 		if (!ids.length) return; // silence is not recorded; the track keeps its gaps
 		// The mixer orders by loudness, and the louder of two people swaps several times a second, so
 		// ['a','b'] and ['b','a'] are the same 20 ms and have to merge. Comparing the raw list would push a
@@ -162,8 +178,10 @@ export class SpeakerAttribution {
 						? `${ids[0]}\u0000${ids[1]}`
 						: `${ids[1]}\u0000${ids[0]}`
 					: [...ids].sort().join('\u0000');
+		// Alone in the sound, not merely alone in the speaking list.
+		const solo = ids.length === 1 && presentIds.filter((id) => id !== ids[0]).length === 0;
 		const last = this.track[this.track.length - 1];
-		if (last && last.endMs === startMs && last.key === key) {
+		if (last && last.endMs === startMs && last.key === key && last.solo === solo) {
 			last.endMs = endMs;
 			return;
 		}
@@ -172,7 +190,7 @@ export class SpeakerAttribution {
 			endMs,
 			ids,
 			key,
-			solo: ids.length === 1,
+			solo,
 			// A derived cache, never a primary fact: "the owner was in this frame" is not the same claim as
 			// "the owner said this", and keeping them apart is the whole point of the change.
 			owner: this.ownerId !== null && ids.includes(this.ownerId),
@@ -500,7 +518,12 @@ export class SpeakerAttribution {
 			const utt = this.utterances[i];
 			if (now - utt.at > windowMs) break;
 			if (!this._beforeTurn(utt, cut)) continue;
-			if (utt.tokens.length < minTokens) continue;
+			// Tokens come out of normalize(), which keeps only a-z0-9, so a sentence in Cyrillic, Greek,
+			// Arabic or Chinese tokenises to NOTHING. Skipping on the token count alone therefore made this
+			// check -- the one that catches somebody cutting in between the owner's command and the answer
+			// -- blind to every language that is not written in Latin letters, which is a way to get a ban
+			// past the gate by talking over the owner in another alphabet. The text itself is the fallback.
+			if (utteranceWeight(utt) < minTokens) continue;
 			return { owner: utt.owner, id: utt.id, text: utt.text, at: utt.at, seq: utt.seq ?? 0, tokens: utt.tokens.length };
 		}
 		return null;

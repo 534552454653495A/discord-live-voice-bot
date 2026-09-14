@@ -14,7 +14,7 @@ import { ActivityType } from 'discord.js';
 import { ChannelType } from 'discord.js';
 import { createTaskRunner, executeAction } from './agent.js';
 import { FRAME_MS, PlaybackQueue, SpeakerMixer, peakOf } from './audio.js';
-import { buildRuns, runCandidates, runEnd, runSpan, runText } from './runs.js';
+import { buildRuns, canEndAfter, runCandidates, runEnd, runSpan, runText } from './runs.js';
 import { SpeakerAttribution } from './attribution.js';
 import { parseVoiceCommand } from './commands.js';
 import { t, tList, tRaw } from './i18n/index.js';
@@ -70,6 +70,9 @@ const TRANSCRIPT_FLUSH_MS = 1200;
 // model's context, a spoken command -- waiting for the room to fall silent first. 8 s sits inside the
 // gate's 15 s transcript window.
 const LINE_MAX_MS = 8000;
+// Past the cap the line waits for a word to finish before it is closed; this is where it stops waiting.
+// A word is not worth more than a couple of seconds of delay.
+const LINE_HARD_MAX_MS = 12_000;
 const PARTS_MAX = 2000; // insurance against a pathological delta rate; bounds the buffer's memory
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
@@ -1239,7 +1242,14 @@ export class GuildSession {
 		buf.parts.push(part);
 		if (buf.timer) clearTimeout(buf.timer);
 		buf.timer = null;
-		if (Date.now() - buf.startedAt >= LINE_MAX_MS || buf.parts.length >= PARTS_MAX) {
+		// The cap is there so that a conversation that never falls silent still produces lines. It is not a
+		// reason to cut a word in half: the fragments are sub-word, so closing the line on whichever one
+		// happened to arrive at the eight second mark splits "banla" into "ban" and "la" -- which also
+		// stops the command parser recognising either half. So it waits for a fragment that ends
+		// somewhere a line can end, and gives up on waiting after a couple of seconds.
+		const age = Date.now() - buf.startedAt;
+		const overdue = age >= LINE_MAX_MS && (canEndAfter(part.text) || age >= LINE_HARD_MAX_MS);
+		if (overdue || buf.parts.length >= PARTS_MAX) {
 			this.flushTranscript(speaker);
 			return;
 		}
@@ -1367,7 +1377,7 @@ export class GuildSession {
 	}
 
 	/** Tells the model whose words a finished line carries, or that it cannot be told. */
-	announceLine({ line, id, candidates }) {
+	announceLine({ line, id, mixed, candidates }) {
 		const clipped = safeContext(line).slice(0, 200);
 		if (!id) {
 			// Two voices ran into each other here. Naming one of them would be a guess, and the assistant acts
@@ -1382,11 +1392,17 @@ export class GuildSession {
 		const name = safeContext(this.speakerLabel(id));
 		const contradicts = this.lastAnnouncedUser && String(id) !== String(this.lastAnnouncedUser);
 		this.lastAnnouncedUser = String(id);
+		const owner = this.isOwnerId(id) ? t('runtime.owner_suffix') : '';
 		// "thinking", not "instructions": this carries somebody's words, and words spoken in the channel
 		// must never arrive on the channel the model treats as hard instruction.
+		//
+		// A mixed line is mostly this person's and holds a piece of somebody else's. It is not honest to
+		// hand it over under one name with no caveat -- the model answers these lines, and it cannot see
+		// what we know about them. The application already refuses to run a command off one; the model is
+		// told the same thing in words so that it can be careful with the part that may not be theirs.
 		this.live.appendContext(
 			'thinking',
-			t('runtime.speaker_line', { name, owner: this.isOwnerId(id) ? t('runtime.owner_suffix') : '', line: clipped }),
+			mixed ? t('runtime.speaker_line_mixed', { name, owner, line: clipped }) : t('runtime.speaker_line', { name, owner, line: clipped }),
 		);
 		if (this.cfg.transcripts && contradicts) this.log(t('runtime.log_context_correction', { line: line.slice(0, 40), name }));
 	}

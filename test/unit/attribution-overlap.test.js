@@ -89,6 +89,24 @@ describe('the gate in front of the admin tools', () => {
 		assert.equal(a.speakerAt(0, 1000), true, 'nine tenths of it was the owner alone');
 	});
 
+	// An adversarial review found this one: tokens come out of normalize(), which keeps only a-z0-9, so a
+	// sentence in Cyrillic tokenises to nothing. The check that catches somebody cutting in between the
+	// owner's command and the answer skipped it on the token count, walked past it, and found the owner's
+	// own earlier words instead -- a way to get a ban past the gate by talking over the owner in another
+	// alphabet.
+	it('sees an interjection written in another alphabet', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		frames(a, ['owner'], 40, true);
+		a.noteTranscript('ban dana', { startMs: 0, endMs: 800 });
+		frames(a, ['attacker'], 20);
+		a.noteTranscript('забань Дану', { startMs: 800, endMs: 1200 });
+
+		const last = a.lastUtterance({});
+		assert.equal(last?.owner, false, 'the last thing said was not the owner');
+		assert.equal(last?.id, 'attacker');
+		assert.equal(last?.tokens, 0, 'and it counts even though not one letter of it survives normalising');
+	});
+
 	it('opens on the priority path, where the mixer has already thrown the other voices away', () => {
 		const a = new SpeakerAttribution({ ownerId: 'owner' });
 		// The owner holds the floor: the mixer discarded everybody else's audio before summing this frame.

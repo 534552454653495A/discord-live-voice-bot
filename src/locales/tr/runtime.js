@@ -14,6 +14,7 @@ export default {
 	log_command_unclear: '[komut] çalıştırılmadı, satır tek kişiye ait değil: "{line}"',
 	name_with_account: '{name} ({account} hesabı)',
 	name_join: ' ve ',
+	speaker_line_mixed: 'Kanalda {name}{owner} şunu söyledi, araya başkasının birkaç kelimesi karışmış olabilir: "{line}"',
 	speaker_line: 'Kanalda {name}{owner} şunu söyledi: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[kayıt kapalı: {count} karakter]',

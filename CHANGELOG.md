@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-09-14
+
+Five findings from an adversarial review of the per-speaker attribution work. Thirty-six agents across
+five lenses; every finding below was independently reproduced before it was believed.
+
+### Security
+
+- **A voice too quiet to be called speech was treated as absent, not as an overlap.** Audio under the
+  speech bar is still summed into the frame the model transcribes, but it never entered the speaker
+  list, so a frame holding two voices was recorded as holding one person alone. Somebody could speak
+  softly and have their words land under another person's name, with that person's authority behind
+  them. The mixer now reports who is really in the frame, at a lower bar than speech, and "alone" means
+  alone in the sound.
+- **An interjection in another alphabet was invisible to the interjection check.** Tokens come from a
+  normaliser that keeps only a-z0-9, so a sentence in Cyrillic, Greek, Arabic or Chinese tokenises to
+  nothing; the check that catches somebody cutting in between the owner's command and the answer walked
+  straight past it and found the owner's own earlier words instead. That was a way to get a ban past the
+  gate by talking over the owner in another script. Real speech now counts as something said whether or
+  not its letters survive normalising.
+
+### Fixed
+
+- **A line holding somebody else's words was handed to the model under one confident name.** The record
+  was stamped uncertain and the command shortcut refused it, but the model, the one part that actually
+  answers these lines, was told the flat sentence with the owner suffix on it. It is now told that a few
+  words of somebody else's may have run into the line.
+- **A speaker whose packets had stopped stayed in the speaking list for the full hold**, which wrote a
+  stale second name onto the first fragment of the next person's turn. Staying now needs both halves:
+  spoke recently, and packets still arriving.
+- **The eight second line cap cut words in half.** It fired on whichever fragment happened to arrive, so
+  "banla" could become "ban" and "la", and then the command parser recognises neither. It now waits for
+  a fragment that ends where a line can end, and gives up waiting after twelve seconds.
+
 ## [1.8.4] — 2026-09-14
 
 ### Fixed

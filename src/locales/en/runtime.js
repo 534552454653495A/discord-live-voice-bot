@@ -14,6 +14,7 @@ export default {
 	log_command_unclear: '[command] not run, the line is not safely one person: "{line}"',
 	name_with_account: '{name} (the account {account})',
 	name_join: ' and ',
+	speaker_line_mixed: 'In the channel {name}{owner} said this, and a few words of somebody else’s may have run into it: "{line}"',
 	speaker_line: 'In the channel {name}{owner} said: "{line}"',
 	// ---------------------------------------------------------------- privacy / recording
 	record_off_placeholder: '[recording off: {count} characters]',
