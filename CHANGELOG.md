@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] — 2026-09-15
+
+### Changed
+
+- **The same short line is not generated twice.** This bot says a handful of things all evening: "here",
+  "all right", "what is it?". Each one cost seconds on the GPU every time, for audio that is identical.
+  Lines under eighty characters are kept, sixty of them at a time, which is exactly the set that repeats.
+  A repeat is now instant.
+- **The first piece of a reply is cut at the earliest clean place** rather than at the full stop. The
+  brain is asked for one short sentence, so waiting for the sentence to end means waiting for the whole
+  reply, and streaming on its own bought nothing. It now starts speaking at the first comma, or failing
+  that at the first word boundary past two dozen characters. Only the first piece: everything after it is
+  generated while the previous piece plays, so there is nothing to gain there and prosody to lose.
+
 ## [1.14.2] — 2026-09-15
 
 ### Added

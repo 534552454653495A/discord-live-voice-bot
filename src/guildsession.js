@@ -23,7 +23,7 @@ import { LatencyMeter } from './latency.js';
 import { LiveSession, describeLiveError } from './live.js';
 import { LocalBrain } from './localbrain.js';
 import { SpeechSegmenter } from './localstt.js';
-import { LocalTts, splitSentences } from './localtts.js';
+import { LocalTts, firstClause, splitSentences } from './localtts.js';
 import { MemberIndex } from './matcher.js';
 import { Ducker, MusicPlayer } from './music.js';
 import { normalize, parseBool, stripDictationTail } from './text.js';
@@ -46,6 +46,11 @@ const AUDIO_PEAK_MIN = 200;
 const TTS_FLUSH_MS = 1500;
 // A sentence that took longer to generate than it lasts is worth a line in the log.
 const TTS_SLOW_MS = 1500;
+// The brain is asked for one short sentence, so waiting for the full stop means waiting for the whole
+// reply: streaming buys nothing on its own. The FIRST piece of a turn is therefore cut early, at a comma
+// or failing that at a word, once there is enough of it to be worth saying. Only the first: everything
+// after it is generated while the previous piece plays, so there is nothing to gain and prosody to lose.
+const FIRST_CHUNK_CHARS = 40;
 // Retrying every few seconds is pointless for permanent errors (credit, key): this interval is used instead.
 const FATAL_RETRY_MS = 10 * 60_000;
 
@@ -615,6 +620,16 @@ export class GuildSession {
 		const { sentences, rest } = splitSentences(this.ttsPending);
 		this.ttsPending = rest;
 		for (const sentence of sentences) if (sentence) this.ttsQueue.push(sentence);
+		// Nothing said yet this turn and a sentence that is taking its time: start on the first clause
+		// rather than on the full stop.
+		if (!this.ttsSaidThisTurn && !this.ttsQueue.length && this.ttsPending.length >= FIRST_CHUNK_CHARS) {
+			const head = firstClause(this.ttsPending);
+			if (head) {
+				this.ttsQueue.push(head);
+				this.ttsPending = this.ttsPending.slice(head.length);
+			}
+		}
+		if (this.ttsQueue.length) this.ttsSaidThisTurn = true;
 		if (this.ttsFlushTimer) clearTimeout(this.ttsFlushTimer);
 		this.ttsFlushTimer = null;
 		if (this.ttsPending.trim()) {
@@ -890,6 +905,7 @@ export class GuildSession {
 		// its way to Chatterbox while the rest is still being generated. Whatever the stream produced is
 		// therefore already queued by the time the call returns.
 		let streamed = false;
+		this.ttsSaidThisTurn = false; // a new answer: its first piece may be cut early again
 		const thoughtAt = Date.now();
 		let firstWordMs = null;
 		const onDelta = (piece) => {

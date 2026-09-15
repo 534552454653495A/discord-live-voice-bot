@@ -11,6 +11,24 @@ const SENTENCE_END = /^\s*(.*?[.!?…]+)(?=\s|$)/su;
  * "example.com/x" do not break a sentence. Long sentences are cut on a word boundary even when they
  * do end with punctuation.
  */
+/**
+ * The longest opening piece of `text` that can be said on its own: up to the last comma, semicolon,
+ * colon or dash, and failing that up to the last space. Returns '' when there is no clean place to cut,
+ * because half a word is worse than a moment's wait.
+ */
+export function firstClause(text, { minChars = 24 } = {}) {
+	const body = String(text ?? '');
+	if (body.length <= minChars) return '';
+	// The EARLIEST place worth cutting, not the latest: the whole point is to be speaking sooner.
+	const breaks = /[,;:—–]\s/g;
+	for (let match = breaks.exec(body); match; match = breaks.exec(body)) {
+		if (match.index + 1 >= minChars) return body.slice(0, match.index + 1).trim();
+	}
+	const space = body.indexOf(' ', minChars);
+	if (space < 0) return '';
+	return body.slice(0, space).trim();
+}
+
 export function splitSentences(text, { maxLength = 220 } = {}) {
 	const sentences = [];
 	let rest = String(text ?? '');
@@ -99,6 +117,11 @@ export function detectLanguage(text, fallback = t('brain.tts_fallback_language')
 	return bestScore >= 3 ? best : fallback;
 }
 
+// Which generated lines are worth keeping. Short ones, because those are the ones that repeat: at
+// 24 kHz mono a five second line is about 240 KB, so sixty of them is a few megabytes.
+const CACHE_MAX_CHARS = 80;
+const CACHE_MAX_ENTRIES = 60;
+
 export class LocalTts {
 	constructor({
 		url = 'http://127.0.0.1:8020',
@@ -116,6 +139,8 @@ export class LocalTts {
 		this.cfgWeight = cfgWeight;
 		this.timeoutMs = timeoutMs;
 		this.log = log;
+		// Short lines that have already been generated, newest last. See speak().
+		this.cache = new Map();
 		this.sampleRate = 24_000;
 	}
 
@@ -145,6 +170,16 @@ export class LocalTts {
 	async speak(text, { signal = null } = {}) {
 		const trimmed = String(text ?? '').trim();
 		if (!trimmed) throw new Error(t('brain.tts_empty_text'));
+		// This bot says the same handful of short things all evening: "here", "all right", "what is it?".
+		// Each one costs seconds on the GPU every single time, for audio that is identical. Short lines are
+		// kept, which is exactly the set that repeats; a long sentence is never said twice anyway.
+		const cached = this.cache?.get(trimmed);
+		if (cached) {
+			// Most recently used goes to the end, so the oldest is the one dropped.
+			this.cache.delete(trimmed);
+			this.cache.set(trimmed, cached);
+			return { pcm: cached.pcm, language: cached.language, cached: true };
+		}
 		const payload = { text: trimmed, language_id: this.languageFor(trimmed) };
 		if (this.voiceRef) payload.voice_ref = this.voiceRef;
 		if (Number.isFinite(this.exaggeration)) payload.exaggeration = this.exaggeration;
@@ -171,6 +206,12 @@ export class LocalTts {
 		const usable = buffer.length & ~1;
 		const aligned = buffer.byteOffset % 2 === 0 ? buffer : Buffer.from(buffer.subarray(0, usable));
 		const pcm = new Int16Array(aligned.buffer, aligned.byteOffset, usable >> 1);
-		return { pcm: resampleLinear(pcm, sampleRate, 24_000), sampleRate, raw: pcm, language: payload.language_id };
+		const out = resampleLinear(pcm, sampleRate, 24_000);
+		if (trimmed.length <= CACHE_MAX_CHARS) {
+			this.cache.set(trimmed, { pcm: out, language: payload.language_id });
+			// Oldest first in a Map, so the first key is the one to drop.
+			while (this.cache.size > CACHE_MAX_ENTRIES) this.cache.delete(this.cache.keys().next().value);
+		}
+		return { pcm: out, sampleRate, raw: pcm, language: payload.language_id };
 	}
 }

@@ -49,6 +49,40 @@ function fakeProvider(script) {
 	};
 }
 
+describe('local speech', () => {
+	// The brain is asked for one short sentence, so waiting for the full stop means waiting for the whole
+	// reply and streaming buys nothing on its own. The first piece of a turn is cut early instead.
+	it('cuts the first piece at the earliest clean place, and not at all when there is none', async () => {
+		const { firstClause } = await import('../../src/localtts.js');
+		assert.equal(firstClause('Tabii canim, hemen hallediyorum ve sana haber veririm'), 'Tabii canim, hemen hallediyorum');
+		assert.equal(firstClause('Tamam canim hallediyorum simdi hemen bak'), 'Tamam canim hallediyorum');
+		assert.equal(firstClause('Kisa.'), '', 'a short line is said in one piece');
+		assert.equal(firstClause('Merhaba nasilsin bugun'), '', 'and so is one with nowhere to cut');
+	});
+
+	it('does not make the same short line twice', async () => {
+		const { LocalTts } = await import('../../src/localtts.js');
+		let calls = 0;
+		const tts = new LocalTts({ url: 'http://127.0.0.1:1' });
+		// Stand in for the server: the cache sits in front of this.
+		const body = new Int16Array(240).fill(7);
+		const original = tts.speak.bind(tts);
+		tts.speak = async (text, options) => {
+			const hit = tts.cache.get(String(text).trim());
+			if (hit) return original(text, options);
+			calls++;
+			tts.cache.set(String(text).trim(), { pcm: body, language: 'tr' });
+			return { pcm: body, language: 'tr' };
+		};
+
+		await tts.speak('Buradayim.');
+		const second = await tts.speak('Buradayim.');
+		assert.equal(calls, 1, 'the second time is free');
+		assert.equal(second.cached, true);
+		assert.equal(second.pcm.length, body.length);
+	});
+});
+
 describe('LocalBrain', () => {
 	// The mouth speaks sentence by sentence, so waiting for the whole reply before handing any of it over
 	// put the entire generation time in front of the first word. The pieces now cross as they arrive.
