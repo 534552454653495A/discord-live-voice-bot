@@ -48,6 +48,8 @@ export default {
 	local_brain_gave_up: 'Local brain: Chatterbox did not become ready within 10 min; gave up (check the server log).',
 	local_brain_off_log: 'The local brain is off ({reason}); GPT-Live is in use.',
 	local_brain_off: 'The local brain is off ({reason})',
+	log_local_timing: '[local] hearing {stt} s, first word {firstWord} s, whole reply {brain} s',
+	log_tts_slow: '[local] the voice took {seconds} s to make {audio} s of speech',
 	local_stt_error: 'Local STT error: {error}',
 	local_brain_no_reply: 'The local brain could not produce a reply: {error}',
 	source_local_brain: 'local brain',

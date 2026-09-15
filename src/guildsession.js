@@ -44,6 +44,8 @@ const MIN_LOGGED_MS = 300;
 const AUDIO_PEAK_MIN = 200;
 // Local TTS: speak the tail that never got its punctuation anyway, after this much silence.
 const TTS_FLUSH_MS = 1500;
+// A sentence that took longer to generate than it lasts is worth a line in the log.
+const TTS_SLOW_MS = 1500;
 // Retrying every few seconds is pointless for permanent errors (credit, key): this interval is used instead.
 const FATAL_RETRY_MS = 10 * 60_000;
 
@@ -639,8 +641,16 @@ export class GuildSession {
 				const controller = new AbortController();
 				this.ttsAbort = controller;
 				try {
+					const spokeAt = Date.now();
 					const { pcm, language } = await this.localTts.speak(sentence, { signal: controller.signal });
+					const voiceMs = Date.now() - spokeAt;
 					if (controller.signal.aborted || !pcm.length) continue;
+					// Only when it is worth knowing about: a sentence that took longer to say than it takes to
+					// hear is the thing standing between somebody and an answer.
+					const audioMs = (pcm.length / this.playback.frameSamples) * FRAME_MS;
+					if (voiceMs > TTS_SLOW_MS) {
+						this.log(t('runtime.log_tts_slow', { seconds: (voiceMs / 1000).toFixed(1), audio: (audioMs / 1000).toFixed(1) }));
+					}
 					// Back pressure: wait until the queue has room (the old 2 s buffer swallowed the start of a sentence).
 					let offset = 0;
 					while (offset < pcm.length && !controller.signal.aborted && this.localMode) {
@@ -654,6 +664,15 @@ export class GuildSession {
 						offset += chunk.length;
 					}
 					if (controller.signal.aborted) continue;
+					// The same measurement the realtime path reports: from the moment somebody stopped talking
+					// to the moment they hear something back. It was never taken in local mode, which is the
+					// mode where it matters most.
+					if (Date.now() - this.lastAssistantSpokeAt > SILENCE_GAP_MS) {
+						const responseMs = this.latency.assistantAudio();
+						if (responseMs !== null && responseMs >= MIN_LOGGED_MS) {
+							this.log(t('runtime.log_latency_response', { seconds: (responseMs / 1000).toFixed(1) }));
+						}
+					}
 					this.lastAssistantSpokeAt = Date.now();
 					this.record({
 						kind: 'voice',
@@ -830,12 +849,14 @@ export class GuildSession {
 		if (this.brain !== 'local') return;
 		if (this.cfg.soloUserId && userId !== this.cfg.soloUserId) return;
 		let result;
+		const heardAt = Date.now();
 		try {
 			result = await this.localStt.transcribe(pcm, { prompt: this.sttPrompt() });
 		} catch (err) {
 			this.log(t('runtime.local_stt_error', { error: err.message }));
 			return;
 		}
+		const sttMs = Date.now() - heardAt;
 		const line = result.text;
 		if (!line || line.length < 2) return;
 		const name = this.nameFor(userId) ?? t('runtime.someone');
@@ -869,8 +890,11 @@ export class GuildSession {
 		// its way to Chatterbox while the rest is still being generated. Whatever the stream produced is
 		// therefore already queued by the time the call returns.
 		let streamed = false;
+		const thoughtAt = Date.now();
+		let firstWordMs = null;
 		const onDelta = (piece) => {
 			streamed = true;
+			if (firstWordMs === null) firstWordMs = Date.now() - thoughtAt;
 			this.enqueueLocalSpeech(piece);
 		};
 		this.localBrain.on('delta', onDelta);
@@ -879,6 +903,18 @@ export class GuildSession {
 			reply = await this.localBrain.handleUtterance({ userName: name, text: line, context: turnDeps });
 		} finally {
 			this.localBrain.off('delta', onDelta);
+		}
+		// Where the wait actually goes. Two of the three are somebody else's machine -- a remote model and
+		// a local speech synthesiser -- so knowing which one is the slow half is the whole of the answer to
+		// "can it be faster", and guessing at it has cost enough rounds already.
+		if (reply.responded || streamed) {
+			this.log(
+				t('runtime.log_local_timing', {
+					stt: (sttMs / 1000).toFixed(1),
+					firstWord: firstWordMs === null ? '-' : (firstWordMs / 1000).toFixed(1),
+					brain: ((Date.now() - thoughtAt) / 1000).toFixed(1),
+				}),
+			);
 		}
 		if (reply.error) this.log(t('runtime.local_brain_no_reply', { error: reply.error }));
 		// The tail of the last sentence, if it never got its punctuation; or the whole reply on a path that

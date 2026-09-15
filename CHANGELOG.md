@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.2] — 2026-09-15
+
+### Added
+
+- **The local wait is reported in its three parts**: how long the ear took, how long until the first word
+  of the reply, and how long the whole reply took. Two of the three happen on somebody else's machine, a
+  remote text model and a local speech synthesiser, so knowing which one is the slow half is the whole of
+  the answer to "can it be faster".
+- **A sentence that takes longer to say than it lasts gets a line**, with both numbers.
+- **The response time is measured in local mode too**, from somebody finishing speaking to hearing
+  something back. The realtime path has always reported it; the mode where it matters most never did.
+
 ## [1.14.1] — 2026-09-15
 
 ### Fixed

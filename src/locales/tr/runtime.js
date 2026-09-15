@@ -48,6 +48,8 @@ export default {
 	local_brain_gave_up: 'Yerel beyin: Chatterbox 10 dk içinde hazır olmadı; vazgeçildi (sunucu logunu kontrol et).',
 	local_brain_off_log: 'Yerel beyin kapandı ({reason}); GPT-Live kullanılıyor.',
 	local_brain_off: 'Yerel beyin kapandı ({reason})',
+	log_local_timing: '[yerel] duyma {stt} sn, ilk kelime {firstWord} sn, cevabın tamamı {brain} sn',
+	log_tts_slow: '[yerel] ses üretimi {seconds} sn sürdü, {audio} sn konuşma için',
 	local_stt_error: 'Yerel STT hatası: {error}',
 	local_brain_no_reply: 'Yerel beyin cevap üretemedi: {error}',
 	source_local_brain: 'yerel beyin',
