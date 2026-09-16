@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] — 2026-09-16
+
+### Added
+
+- **Being told to be quiet now says what quiet means for the conversation.** The instructions already
+  said the bot must not speak while the owner's silence is on, and the application drops its voice
+  anyway, but nothing said that the talk around it is not addressed to it, so a sentence carrying its
+  own name could still read as an invitation to answer it. The note that goes out the moment the owner
+  silences it now spells that out — the channel's talk belongs to the people having it, and it is not
+  answered, commented on, or turned into a reason to speak when the name comes up — and the standing
+  instructions carry the same judgement for the ordinary case: a request, a question or a remark aimed
+  at the bot is for it, people talking among themselves is not, and it keeps listening instead of
+  chipping in.
+- **The local brain hears the silence too.** In local mode it used to reach only the audio path: the
+  model was never told, and it kept generating answers that were dropped before anybody heard them. It
+  is now given the same note the realtime session gets.
+
 ## [1.15.0] — 2026-09-15
 
 ### Changed

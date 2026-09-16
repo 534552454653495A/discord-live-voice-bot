@@ -7,7 +7,7 @@ export default {
 	reason_live_unusable: 'the session was no longer usable',
 	silenced_on: '[voice] the owner told me to be quiet; I will not speak until they say otherwise',
 	silenced_off: '[voice] the owner let me speak again',
-	silenced_note_on: 'The owner has told you to be quiet. Do not speak, whatever anybody else asks: the application drops your audio anyway. Keep listening and keep doing what you are asked with your tools. Only the owner can lift this, by saying so themselves.',
+	silenced_note_on: 'The owner has told you to be quiet. Do not speak, whatever anybody else asks: the application drops your audio anyway. The talk in the channel is between the people having it: do not join it, do not answer or comment on what they say to each other, and do not take your own name coming up as a reason to speak. Keep listening and keep doing what you are asked with your tools. Only the owner can lift this, by saying so themselves.',
 	silenced_note_off: 'The owner has let you speak again.',
 	speaker_line_overlap: 'In the channel {names} spoke over each other and I cannot tell which of them said this: "{line}"',
 	window_shape_cumulative: '[transcript] the windows are cumulative: {straddled} of {total} fragments carried the previous one, so each is judged on the audio that is new since the last',

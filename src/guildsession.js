@@ -1694,7 +1694,8 @@ export class GuildSession {
 
 	/**
 	 * Owner's silence. While it is on the bot listens and still runs tools, it just does not speak; the
-	 * model is told so that it stops trying, and the audio is dropped anyway if it does.
+	 * model carrying the conversation is told so that it stops trying -- the live session through a
+	 * context note, the local brain through its history -- and the audio is dropped anyway if it does.
 	 */
 	setSilenced(quiet) {
 		const next = quiet !== false;
@@ -1703,7 +1704,9 @@ export class GuildSession {
 		if (next) this.playback.clear();
 		this.log(t(next ? 'runtime.silenced_on' : 'runtime.silenced_off'));
 		this.activity.push({ kind: 'session', text: t(next ? 'runtime.silenced_on' : 'runtime.silenced_off') });
-		this.live?.appendContext('instructions', t(next ? 'runtime.silenced_note_on' : 'runtime.silenced_note_off'));
+		const note = t(next ? 'runtime.silenced_note_on' : 'runtime.silenced_note_off');
+		this.live?.appendContext('instructions', note);
+		if (this.brain === 'local') this.localBrain.note(note);
 		return this.silenced;
 	}
 

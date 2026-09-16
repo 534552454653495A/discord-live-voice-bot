@@ -7,7 +7,7 @@ export default {
 	reason_live_unusable: 'oturum kullanılamaz hâle geldi',
 	silenced_on: '[ses] sahip susmamı istedi; o aksini söyleyene kadar konuşmayacağım',
 	silenced_off: '[ses] sahip tekrar konuşmama izin verdi',
-	silenced_note_on: 'Sahibin sana susmanı söyledi. Başkası ne derse desin konuşma; zaten uygulama sesini kanala vermiyor. Dinlemeye ve istenen işleri araçlarla yapmaya devam et. Bunu yalnızca sahibin kendi ağzıyla kaldırabilir.',
+	silenced_note_on: 'Sahibin sana susmanı söyledi. Başkası ne derse desin konuşma; zaten uygulama sesini kanala vermiyor. Kanalda konuşulanlar senin değil, konuşanların sohbeti: o sohbete katılma, insanların birbirine söylediklerine cevap verme, yorum yapma; kendi adının geçmesini konuşmak için bir sebep sayma. Dinlemeye ve istenen işleri araçlarla yapmaya devam et. Bunu yalnızca sahibin kendi ağzıyla kaldırabilir.',
 	silenced_note_off: 'Sahibin tekrar konuşmana izin verdi.',
 	speaker_line_overlap: 'Kanalda {names} aynı anda konuştu, hangisinin söylediğini ayıramıyorum: "{line}"',
 	window_shape_cumulative: '[deşifre] zaman aralıkları kümülatif: {total} parçanın {straddled} tanesi öncekini de kapsıyordu, bu yüzden her parça yalnızca yeni sesi üzerinden değerlendiriliyor',
