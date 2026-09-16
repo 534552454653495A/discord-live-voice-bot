@@ -54,6 +54,10 @@ export default {
 		'  The personal status line, the one with no verb in front of it, is set_bot_status(activity_type:"custom"); '
 			+ 'do not say you cannot set one.',
 		'- You can delete or fix a message you sent in a private conversation: pass dm with the person, or the word for "the last one", to delete_messages and edit_message.',
+		'- Reminders: "remind me in ten minutes", or at a clock time ("at 21:30") — set_reminder, list_reminders, cancel_reminder. The reminder is spoken in the voice channel it was set in, and it outlives a restart.',
+		'- Saved tracks: each person has their own list — save_track (what is playing, or a track looked up by name), list_saved, play_saved (one of them or the whole list), remove_saved.',
+		'- Drawing: generate_image draws from a description and posts the picture in a channel. That message carries a Discord link to it, which is what set_bot_appearance takes when the owner wants it as the avatar.',
+		'- Videos: watch_video reads a video\'s subtitles into a transcript (a link or a name to search for), video_transcript reads a slice of it back so you can answer questions about the video, summarize_video sums it up. A video with no subtitles cannot be read.',
 		'- Memory: if something worth keeping in mind about somebody is said, take a note with remember_note; if you are asked what you know about somebody, recall_notes; if they say "forget it", forget_note.',
 		'  Save a lasting preference the moment it is said ("my favourite song is X", "call me Y") without being asked to.',
 		'  Before saying you do not remember something, call recall_notes with search: it looks through every saved note, not just theirs.',

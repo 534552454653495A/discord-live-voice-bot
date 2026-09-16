@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.2] — 2026-09-16
+
+### Fixed
+
+- **A reminder could be swallowed instead of spoken.** The ticker handed the line to the session and deleted the
+  reminder in the same breath, so one that came due while the owner had the bot quiet — or while it was between
+  connections — was gone without ever being said. The greeting's own lesson was missed as well: an instruction is
+  guidance, and guidance alone does not make the model speak, which is why the greeting sends a short nudge after it.
+  A reminder now goes out the same way, and it leaves the store only when the session accepted it; anything else stays
+  pending and is tried again on the next tick.
+- **The reminder ticker could take the process down.** It was the only thing writing on a timer and had no error
+  boundary: a failed save was an unhandled rejection, and a throwing `say` would have gone straight into the event
+  loop. The tick now catches its own errors, logs them, and attaches a handler to the write.
+
+### Changed
+
+- The standing instructions list the new capabilities (reminders, saved tracks, drawing, video reading) where the model
+  reads what it may delegate, so it calls the tool instead of saying it cannot.
+- A saved local file is remembered by the words that found it rather than by its absolute path, which the player does
+  not match on.
+- `package.json`'s description no longer carries a tool count — it still said 53 while the README said 118.
+
 ## [1.21.1] — 2026-09-16
 
 ### Fixed

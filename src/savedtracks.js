@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { t } from './i18n/index.js';
 import { normalize } from './text.js';
 
 const MAX_TITLE = 200;
@@ -34,11 +35,11 @@ export class SavedTracks {
 			let parsed = null;
 			try {
 				parsed = JSON.parse(raw);
-			} catch {
+			} catch (err) {
 				// Corrupt file: a saved list is not worth refusing to start over.
-				const backup = `${this.file}.${Date.now()}.json`;
+				const backup = `${this.file}.${t('store.backup_suffix')}-${Date.now()}.json`;
 				await copyFile(this.file, backup).catch(() => {});
-				this.log?.(`[music] saved tracks file could not be read; kept a copy at ${backup}`);
+				this.log?.(t('store.load_failed', { error: err.message, backup }));
 			}
 			if (parsed && Array.isArray(parsed.items)) {
 				this.items = parsed.items

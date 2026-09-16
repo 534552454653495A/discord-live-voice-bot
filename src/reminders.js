@@ -11,6 +11,8 @@ import { dirname } from 'node:path';
 import { t } from './i18n/index.js';
 
 const MAX_TEXT = 300;
+// After this much lateness the reminder says why it is late (the process was not running).
+const LATE_MS = 60_000;
 // A queue nobody can cap is a way for one speaker to keep the bot talking indefinitely.
 export const MAX_PENDING_PER_GUILD = 50;
 
@@ -124,6 +126,34 @@ export class ReminderStore {
 		if (index < 0) return null;
 		const [removed] = this.items.splice(index, 1);
 		return { ...removed };
+	}
+
+	/**
+	 * Hands every due reminder to the session that should say it. A reminder whose session cannot speak
+	 * right now (the bot is not in that server, or the owner has silenced it) is left in the store and
+	 * tried again on the next tick — the one thing that must not happen is one disappearing unsaid.
+	 * @returns {{ spoken: object[], kept: object[] }}
+	 */
+	deliverDue({ sessionFor, now = this.now() } = {}) {
+		const spoken = [];
+		const kept = [];
+		for (const item of this.due(now)) {
+			const session = typeof sessionFor === 'function' ? sessionFor(item.guildId) : null;
+			const late = now - item.dueAt > LATE_MS;
+			const line = t(late ? 'runtime.reminder_late' : 'runtime.reminder_due', {
+				name: item.userName ?? t('runtime.someone'),
+				text: item.text,
+			});
+			const handedOver = Boolean(session?.sayNow?.(line));
+			if (!handedOver) {
+				kept.push(item);
+				continue;
+			}
+			session.record?.({ kind: 'voice', direction: 'out', whoName: session.persona?.().name ?? 'bot', text: line });
+			this.remove(item.id);
+			spoken.push(item);
+		}
+		return { spoken, kept };
 	}
 
 	/** Queued write: two saves never collide on the same .tmp file. */

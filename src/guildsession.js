@@ -553,6 +553,25 @@ export class GuildSession {
 		return !this.silenced && (Boolean(this.live?.ready) || this.brain === 'local');
 	}
 
+	/**
+	 * Says a line that has to be heard now — a reminder, a greeting — rather than something the model may
+	 * fold into the conversation. In live mode that is an instruction plus the same short nudge the
+	 * greeting uses: an instruction is guidance, and guidance on its own does not make the model speak.
+	 * Returns false when nothing was handed over, so the caller can keep the line for later.
+	 */
+	sayNow(text) {
+		const line = String(text ?? '').trim();
+		if (!line || !this.canSpeak()) return false;
+		if (this.brain === 'local') {
+			this.enqueueLocalSpeech(line);
+			this.localBrain.note(t('runtime.note_self_said', { text: line }));
+			return true;
+		}
+		this.live.appendContext('instructions', t('runtime.speak_now', { text: line }));
+		this.live.appendContext('commentary', t('runtime.speak_nudge'));
+		return true;
+	}
+
 	/** Tells the model to "say this" (it comes out in the channel); with the local brain Chatterbox reads it. */
 	say(text) {
 		if (this.silenced) return;

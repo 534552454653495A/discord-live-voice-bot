@@ -202,7 +202,9 @@ export const tools = [
 				userId: speaker.id,
 				userName: speaker.name,
 				title: track.title,
-				ref: track.url ?? track.query ?? track.title,
+				// What plays it again: a local file is found by the words that found it (the player matches
+				// names inside MUSIC_DIR, not paths), a link or a search by its URL.
+				ref: track.kind === 'file' ? (track.query ?? track.title) : (track.url ?? track.title),
 				kind: track.kind,
 			});
 			if (!saved) return { ok: false, spoken: t('tools.music.save_full', { max: MAX_SAVED_PER_USER }) };

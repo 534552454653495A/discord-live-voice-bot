@@ -269,24 +269,18 @@ async function joinChannel(channel) {
 
 // ---------------------------------------------------------------- reminders
 
-// A due reminder is spoken in the voice channel of the server it was set in. One that cannot be spoken
-// yet — the bot is not in that server, or the owner has silenced it — stays pending and is tried again
-// on the next tick, so nothing is dropped for being early, late or outlived by a restart.
+// A due reminder is spoken in the voice channel of the server it was set in. One that cannot be handed
+// over right now — the bot is not in that server, the owner has silenced it — stays in the store and is
+// tried again on the next tick: the one thing that must not happen is a reminder disappearing unsaid.
+// This is also the only place in the process that writes on a timer, so nothing in it may throw out
+// into the event loop.
 const REMINDER_TICK_MS = 5_000;
 const reminderTimer = setInterval(() => {
-	const now = Date.now();
-	for (const item of reminders.due(now)) {
-		const session = sessionFor(item.guildId);
-		if (!session?.canSpeak()) continue;
-		const late = now - item.dueAt > 60_000;
-		const line = t(late ? 'runtime.reminder_late' : 'runtime.reminder_due', {
-			name: item.userName ?? t('runtime.someone'),
-			text: item.text,
-		});
-		session.say(line);
-		session.record({ kind: 'voice', direction: 'out', whoName: session.persona().name ?? 'bot', text: line });
-		reminders.remove(item.id);
-		void reminders.save();
+	try {
+		const { spoken } = reminders.deliverDue({ sessionFor });
+		if (spoken.length) reminders.save().catch((err) => log(t('runtime.reminder_save_failed', { error: err.message })));
+	} catch (err) {
+		log(t('runtime.reminder_tick_failed', { error: err.message }));
 	}
 }, REMINDER_TICK_MS);
 if (typeof reminderTimer.unref === 'function') reminderTimer.unref();

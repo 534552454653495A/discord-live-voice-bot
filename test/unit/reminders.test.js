@@ -58,6 +58,36 @@ describe('ReminderStore', () => {
 	});
 });
 
+describe('deliverDue', () => {
+	it('keeps a reminder whose session cannot speak, and takes the spoken ones out', () => {
+		const store = new ReminderStore(fileFor('deliver.json'));
+		const quiet = store.add({ guildId: 'g1', userId: 'u1', userName: 'Ali', text: 'quiet one', dueAt: 1_000 });
+		const elsewhere = store.add({ guildId: 'g2', text: 'no session here', dueAt: 1_000 });
+		const silent = { sayNow: () => false, record: () => {}, persona: () => ({ name: 'Aria' }) };
+		const first = store.deliverDue({ now: 2_000, sessionFor: (guildId) => (guildId === 'g1' ? silent : null) });
+		assert.deepEqual(first.spoken, [], 'nothing could be handed over');
+		assert.deepEqual(first.kept.map((item) => item.id), [quiet.id, elsewhere.id]);
+		assert.equal(store.list().length, 2, 'nothing is dropped for being unspeakable');
+
+		const lines = [];
+		const speaking = { sayNow: (line) => (lines.push(line), true), record: () => {}, persona: () => ({ name: 'Aria' }) };
+		const second = store.deliverDue({ now: 3_000, sessionFor: () => speaking });
+		assert.equal(second.spoken.length, 2);
+		assert.equal(store.list().length, 0, 'what was spoken is gone');
+		assert.match(lines[0], /quiet one/);
+	});
+
+	it('says when the time came while the bot was not running', () => {
+		const store = new ReminderStore(fileFor('late.json'));
+		store.add({ guildId: 'g1', userName: 'Ali', text: 'old one', dueAt: 1_000 });
+		const lines = [];
+		const session = { sayNow: (line) => (lines.push(line), true), record: () => {}, persona: () => ({ name: 'Aria' }) };
+		store.deliverDue({ now: 1_000 + 120_000, sessionFor: () => session });
+		assert.equal(lines.length, 1);
+		assert.match(lines[0], /while I was offline/);
+	});
+});
+
 function toolDeps(store, { id = 'u1', name = 'Ali' } = {}) {
 	const events = [];
 	return {
