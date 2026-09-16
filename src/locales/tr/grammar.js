@@ -38,6 +38,21 @@ export default {
 	// "kanaldan ayrıl"
 	leave: { pattern: 'kanaldan\\s+ayr[ıi]l', flags: 'iu' },
 
+	// "sus", "sessiz ol", "kes sesini"; geri dönüş "konuşabilirsin". Susmak modelin değil uygulamanın
+	// tuttuğu bir durum, bu yüzden kelimeler burada: model hiç devreye girmeden çalışsın. "susma",
+	// "susam" ve "susadım" eşleşmez; "sus" tek başına ya da kendi çekimleriyle aranır.
+	quiet: {
+		on: {
+			pattern:
+				'(?<![\\p{L}])(?:sus(?:unuz|un|s[ae]n[ae]|ar\\s+m[ıi]s[ıi]n)?|sessiz\\s+ol(?:un|unuz)?|sessizlik|kes\\s+ses[iı]n[iı]|ses[iı]n[iı]\\s+kes|kapa\\s+çenen[iı]|çenen[iı]\\s+kapa)(?![\\p{L}])',
+			flags: 'iu',
+		},
+		off: {
+			pattern: '(?<![\\p{L}])(?:konu[şs]ab[iı]l[iı]r(?:s[iı]n(?:[iı]z)?)?|devam\\s+edeb[iı]l[iı]rs[iı]n)(?![\\p{L}])',
+			flags: 'iu',
+		},
+	},
+
 	// What may follow a channel name: the word "kanal" with any suffix, or the case suffix on its
 	// own ("genel sohbete merhaba yaz").
 	channel_suffix: {

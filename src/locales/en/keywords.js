@@ -47,7 +47,7 @@ export default {
 		timeout: ['timeout', 'mute', 'silence'],
 		role: ['role', 'rank', 'permission'],
 		voice: ['voice', 'mic', 'microphone', 'mute', 'sound'],
-		setting: ['setting', 'mode', 'config', 'option'],
+		setting: ['setting', 'mode', 'config', 'option', 'quiet', 'silence', 'shut', 'hush', '=speak', '=talk'],
 		delete: ['delete', 'remove', 'clear', 'purge', 'wipe', 'clean'],
 		channel: ['channel', 'room', 'category', 'lock', 'unlock'],
 		name: ['nickname', 'nick', 'rename', '=name'],

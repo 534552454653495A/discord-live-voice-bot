@@ -52,6 +52,21 @@ export default {
 		flags: 'iu',
 	},
 
+	// "be quiet", "shut up" and the way back, "you can speak again". Being quiet is a state of the
+	// application and not a request to the model, so the words that switch it are matched here and run
+	// without one. A bare "quiet" is deliberately absent: "the reading room is quiet" is a sentence,
+	// not an instruction.
+	quiet: {
+		on: {
+			pattern: '(?<![\\p{L}])(?:be\\s+quiet|quiet\\s+down|shut\\s+up|shut\\s+it|hush|silence)(?![\\p{L}])',
+			flags: 'iu',
+		},
+		off: {
+			pattern: '(?<![\\p{L}])(?:(?:you\\s+)?(?:can|may)\\s+(?:speak|talk)|(?:speak|talk)\\s+again)(?![\\p{L}])',
+			flags: 'iu',
+		},
+	},
+
 	// What may follow a channel name: the word that marks it as a channel.
 	channel_suffix: { pattern: '^\\s*(?:voice\\s+)?(?:channel|chat|room|vc)(?![\\p{L}])', flags: 'iu' },
 

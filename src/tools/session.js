@@ -94,7 +94,7 @@ export const tools = [
 	defineTool({
 		name: 'set_setting',
 		description:
-			'Changes a runtime setting (transcripts, announce_speaker, owner_priority, idle_close_minutes, local_tts, record). Owner only.',
+			'Changes a runtime setting (transcripts, announce_speaker, owner_priority, idle_close_minutes, local_tts, record, quiet). Owner only. quiet stops the bot speaking until the owner lifts it.',
 		parameters: P.obj(
 			{
 				name: P.str('Setting name'),
@@ -117,8 +117,10 @@ export const tools = [
 			}
 			const value = applied && typeof applied === 'object' ? applied.value : applied;
 			const shown = typeof value === 'boolean' ? (value ? t('tools.session.on') : t('tools.session.off')) : String(value);
+			// A setting may bring its own line: "quiet" is the bot's own voice, not a name and a value.
+			const spoken = (applied && typeof applied === 'object' && applied.spoken) || t('tools.session.setting_set', { name: args.name, value: shown });
 			deps.log?.(t('tools.session.log_setting', { name: args.name, value: shown }));
-			return { ok: true, spoken: t('tools.session.setting_set', { name: args.name, value: shown }), data: { name: String(args.name), value } };
+			return { ok: true, spoken, data: { name: String(args.name), value } };
 		},
 	}),
 ];

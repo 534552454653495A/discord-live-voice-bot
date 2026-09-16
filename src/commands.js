@@ -643,6 +643,8 @@ function rx(entry) {
 const LETTER_CLASSES = tRaw('grammar.letter_classes') ?? {};
 const CHARACTER_SWITCH = (tRaw('grammar.character_switch') ?? []).map(rx);
 const LEAVE = rx(tRaw('grammar.leave'));
+const QUIET_ON = rx(tRaw('grammar.quiet')?.on);
+const QUIET_OFF = rx(tRaw('grammar.quiet')?.off);
 const CHANNEL_SUFFIX = rx(tRaw('grammar.channel_suffix'));
 const FILLERS = rx(tRaw('grammar.fillers'));
 const MESSAGE_PREFIX = rx(tRaw('grammar.message_prefix'));
@@ -858,6 +860,16 @@ export function extractMusic(text) {
 }
 
 /**
+ * Quiet on/off. The state belongs to the application, so the words that switch it are matched here
+ * and run without the model; the owner gate still decides whether those words were the owner's.
+ */
+function extractQuiet(text) {
+	if (QUIET_OFF?.test(text)) return { type: 'quiet', value: 'off' };
+	if (QUIET_ON?.test(text)) return { type: 'quiet', value: 'on' };
+	return null;
+}
+
+/**
  * Extracts a command from what was said in the channel. Returns null when nothing matches.
  *
  * channels: { text: [{id,name}], voice: [{id,name}] } — channel names are matched loosely against
@@ -866,6 +878,7 @@ export function extractMusic(text) {
  * Returned shape: { type: 'character', character } | { type: 'character-miss', name }
  *   | { type: 'send', channel, name, text } | { type: 'read', channel, name }
  *   | { type: 'join', channel, name } | { type: 'leave' } | { type: 'music', action, ... }
+ *   | { type: 'quiet', value: 'on' | 'off' }
  */
 export function parseVoiceCommand(text, characters = [], channels = { text: [], voice: [] }) {
 	const line = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -884,6 +897,9 @@ export function parseVoiceCommand(text, characters = [], channels = { text: [], 
 
 	const music = extractMusic(line);
 	if (music) return music;
+
+	const quiet = extractQuiet(line);
+	if (quiet) return quiet;
 
 	const read = extractRead(line, channels.text ?? []);
 	if (read) return read;
@@ -911,6 +927,9 @@ export function actionSignature(command, now = Date.now()) {
 			return `join:${command.channel?.id ?? command.name ?? '-'}`;
 		case 'leave':
 			return 'leave';
+		case 'quiet':
+			// Repeated "sus" inside the same five seconds is the same request, not two.
+			return `quiet:${command.value}:${Math.floor(now / 5000)}`;
 		case 'character':
 			return `character:${command.character?.id ?? command.name ?? '-'}`;
 		case 'music':

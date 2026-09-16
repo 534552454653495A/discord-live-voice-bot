@@ -19,6 +19,7 @@ const TOOL_FOR_COMMAND = {
 	join: 'join_voice',
 	leave: 'leave_voice',
 	character: 'switch_character',
+	quiet: 'set_setting',
 	music: null, // picked from the action field
 };
 
@@ -55,7 +56,9 @@ export function toolCallFor(command, deps) {
 					? { channel: channelName }
 					: command.type === 'character'
 						? { name: command.character?.name ?? command.name }
-						: {};
+						: command.type === 'quiet'
+							? { name: 'quiet', value: command.value }
+							: {};
 	return { name, args };
 }
 

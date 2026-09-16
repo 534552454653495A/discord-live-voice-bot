@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.1] — 2026-09-16
+
+### Fixed
+
+- **"Be quiet" switched nothing on.** The state existed — the owner held it, only the owner could lift it, and
+  the audio was dropped while it lasted — but there was no way into it. The settings tool did not list `quiet`
+  among the settings it knows, so the model never asked for it; the owner gate had no quiet word in its keyword
+  list, so a call that did arrive would have been refused as "the owner did not say the keyword"; and no spoken
+  pattern caught "sus" the way the music controls are caught. Heard live: the owner said "melis sus", the bot
+  answered "Tamam, susuyorum", and it kept talking until it was told off for it.
+  The settings tool now offers `quiet` and says what it does, the gate accepts the words that ask for it
+  ("sus", "sessiz ol", "kes sesini"; "be quiet", "shut up") and the words that lift it ("konuşabilirsin",
+  "speak again"), the standing instructions tell the model to call the tool the moment the owner asks instead
+  of promising to go quiet, and the voice-command grammar carries the same words, so a clean line in the
+  owner's own voice engages the state with no model involved at all. Going quiet and coming back each have
+  their own short line instead of a setting name and a value.
+
 ## [1.16.0] — 2026-09-16
 
 ### Added

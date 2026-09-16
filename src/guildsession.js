@@ -1902,7 +1902,7 @@ export class GuildSession {
 			case 'silence': {
 				const quiet = asBool(value, !this.silenced);
 				this.setSilenced(quiet);
-				return quiet;
+				return { value: quiet, spoken: t(quiet ? 'runtime.quiet_on_spoken' : 'runtime.quiet_off_spoken') };
 			}
 			case 'transcripts':
 				cfg.transcripts = asBool(value, cfg.transcripts);
