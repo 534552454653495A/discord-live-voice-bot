@@ -11,6 +11,8 @@ export default {
 	silenced_note_off: 'The owner has let you speak again.',
 	quiet_on_spoken: 'Going quiet.',
 	quiet_off_spoken: 'Speaking again.',
+	reminder_due: '{name}, you asked me to remind you: {text}',
+	reminder_late: '{name}, you asked me to remind you — the time came while I was offline: {text}',
 	speaker_line_overlap: 'In the channel {names} spoke over each other and I cannot tell which of them said this: "{line}"',
 	window_shape_cumulative: '[transcript] the windows are cumulative: {straddled} of {total} fragments carried the previous one, so each is judged on the audio that is new since the last',
 	window_shape_per_fragment: '[transcript] the windows are per fragment: {straddled} of {total} overlapped the previous one',

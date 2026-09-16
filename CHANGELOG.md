@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] — 2026-09-16
+
+### Added
+
+- **Reminders that outlive the process.** "Remind me in ten minutes to take the pizza out", or "at 21:30" —
+  the bot says it out loud in the voice channel it was asked in. The reminder is kept in
+  `data/reminders.json` and read back on start, so closing and reopening the bot does not lose it: one whose
+  time passed while it was down is announced late and says why, instead of being swallowed. A reminder that
+  cannot be spoken yet — the bot is not in that server, or the owner has silenced it — stays pending and is
+  tried again every few seconds, so nothing is dropped for being early. `list_reminders` shows what is
+  waiting and `cancel_reminder` takes one back, and only the person who set a reminder can cancel it. Times
+  are the machine's own clock: minutes are a delay, "21:30" is the next time the clock shows it, and
+  "09:15" said after nine means tomorrow.
+
 ## [1.17.0] — 2026-09-16
 
 ### Added
@@ -27,7 +41,8 @@ All notable changes to this project are documented here. The format follows
 - **Some words the grammar listens for could not open the owner gate.** "kes sesini", "kapa çeneni" and
   "devam edebilirsin" were parsed and then refused as "the owner did not say the keyword", and the refusal is
   spoken — so asking to be quiet produced a sentence instead of silence. "kes", "kapa" and "edebilir" are gate
-  words now, written as stems, so "kesin" and "kapat" stay out.
+  words now, written as stems, so they take their own inflections and not other words ("kapat" and "kapalı"
+  stay out).
 - **The quiet phrases have tests now** (the parser suite, both languages): the words that ask for silence, the
   way back, and the ones that must not match — "susma", "susmuyorum", "susam", "çok susadım", "the reading
   room is quiet".

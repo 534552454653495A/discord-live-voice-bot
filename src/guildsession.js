@@ -136,6 +136,8 @@ export class GuildSession {
 		quota,
 		reader,
 		recentActions,
+		reminders,
+		savedTracks,
 		activity,
 		record,
 		provider,
@@ -159,6 +161,8 @@ export class GuildSession {
 		this.quota = quota;
 		this.reader = reader;
 		this.recentActions = recentActions;
+		this.reminders = reminders;
+		this.savedTracks = savedTracks;
 		// Which guild an event came from is stamped on HERE, once, instead of at every push() call site:
 		// the panel needs it to tell two servers apart, and a new call site cannot forget it.
 		const guildLabel = guild?.name ?? guild?.id ?? null;
@@ -460,6 +464,8 @@ export class GuildSession {
 			transcriptLagging: (opts) => session.attribution.transcriptLagging(opts),
 			awaitTranscript: (maxMs) => session.awaitTranscript(maxMs),
 			activity: (event) => session.activity.push(event),
+			reminders: session.reminders,
+			savedTracks: session.savedTracks,
 			setDefaultVoice: (voiceName) => {
 				cfg.liveVoice = voiceName;
 			},
@@ -540,6 +546,11 @@ export class GuildSession {
 			else if (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) voice.push(channel);
 		}
 		return { text, voice };
+	}
+
+	/** Can the bot say something right now: connected (or local) and not silenced by the owner? */
+	canSpeak() {
+		return !this.silenced && (Boolean(this.live?.ready) || this.brain === 'local');
 	}
 
 	/** Tells the model to "say this" (it comes out in the channel); with the local brain Chatterbox reads it. */

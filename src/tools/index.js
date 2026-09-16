@@ -12,6 +12,7 @@ import { tools as sessionTools } from './session.js';
 import { tools as summaryTools } from './summary.js';
 import { tools as threadsTools } from './threads.js';
 import { tools as reactionsTools } from './reactions.js';
+import { tools as reminderTools } from './reminders.js';
 import { tools as expressionsTools } from './expressions.js';
 import { tools as eventsTools } from './events.js';
 import { tools as automodTools } from './automod.js';
@@ -39,6 +40,7 @@ for (const list of [
 	eventsTools,
 	expressionsTools,
 	reactionsTools,
+	reminderTools,
 	threadsTools,
 ]) {
 	for (const tool of list) {

@@ -30,6 +30,7 @@ import { ActivityLog, startPanel } from './panel.js';
 import { createTextProvider } from './provider.js';
 import { DailyQuota } from './quota.js';
 import { ChannelReader } from './reader.js';
+import { ReminderStore } from './reminders.js';
 import { CharacterStore } from './store.js';
 import { summarizeConversation } from './summary.js';
 import { callTool, toolDefinitions } from './tools.js';
@@ -53,6 +54,8 @@ const log = (...args) => console.log(`[${stamp()}]`, ...args);
 const store = await new CharacterStore(path.join(dataDir, 'characters.json'), { log }).load();
 const memory = cfg.memoryEnabled ? await new MemoryStore(path.join(dataDir, 'memory.json')).load() : null;
 const quota = await new DailyQuota({ limitSeconds: cfg.dailyLiveSeconds, file: path.join(dataDir, 'quota.json') }).load();
+// Reminders outlive the process: they are read back on start and spoken by the ticker further down.
+const reminders = await new ReminderStore(path.join(dataDir, 'reminders.json'), { log }).load();
 const recentActions = new RecentActions();
 const reader = new ChannelReader({ defaultLimit: cfg.readLimit });
 const replyLimiter = new ReplyLimiter({ perMinute: 6 });
@@ -146,6 +149,7 @@ async function ensureSession(guildId, channelId = null) {
 		quota,
 		reader,
 		recentActions,
+		reminders,
 		activity,
 		record,
 		provider,
@@ -258,6 +262,30 @@ async function joinChannel(channel) {
 	}
 	return primarySession()?.joinVoice(channel);
 }
+
+// ---------------------------------------------------------------- reminders
+
+// A due reminder is spoken in the voice channel of the server it was set in. One that cannot be spoken
+// yet — the bot is not in that server, or the owner has silenced it — stays pending and is tried again
+// on the next tick, so nothing is dropped for being early, late or outlived by a restart.
+const REMINDER_TICK_MS = 5_000;
+const reminderTimer = setInterval(() => {
+	const now = Date.now();
+	for (const item of reminders.due(now)) {
+		const session = sessionFor(item.guildId);
+		if (!session?.canSpeak()) continue;
+		const late = now - item.dueAt > 60_000;
+		const line = t(late ? 'runtime.reminder_late' : 'runtime.reminder_due', {
+			name: item.userName ?? t('runtime.someone'),
+			text: item.text,
+		});
+		session.say(line);
+		session.record({ kind: 'voice', direction: 'out', whoName: session.persona().name ?? 'bot', text: line });
+		reminders.remove(item.id);
+		void reminders.save();
+	}
+}, REMINDER_TICK_MS);
+if (typeof reminderTimer.unref === 'function') reminderTimer.unref();
 
 // ---------------------------------------------------------------- command context
 

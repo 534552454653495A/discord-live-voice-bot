@@ -11,6 +11,8 @@ export default {
 	silenced_note_off: 'Sahibin tekrar konuşmana izin verdi.',
 	quiet_on_spoken: 'Susuyorum.',
 	quiet_off_spoken: 'Konuşmaya devam ediyorum.',
+	reminder_due: '{name}, hatırlatmamı istemiştin: {text}',
+	reminder_late: '{name}, hatırlatmamı istemiştin — zamanı geldiğinde çevrimdışıydım: {text}',
 	speaker_line_overlap: 'Kanalda {names} aynı anda konuştu, hangisinin söylediğini ayıramıyorum: "{line}"',
 	window_shape_cumulative: '[deşifre] zaman aralıkları kümülatif: {total} parçanın {straddled} tanesi öncekini de kapsıyordu, bu yüzden her parça yalnızca yeni sesi üzerinden değerlendiriliyor',
 	window_shape_per_fragment: '[deşifre] zaman aralıkları parça başına: {total} parçanın yalnızca {straddled} tanesi öncekiyle kesişti',
