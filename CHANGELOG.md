@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.3] — 2026-09-16
+
+### Fixed
+
+- **One reply was recorded twice, and the second copy carried the first.** Heard live: the bot says
+  "Ne oldu, şaşır", and the next line in the log is "Ne oldu, şaşır İkinizi birden duyuyorum…" — the same
+  sentence with the rest appended. The transcript stream re-sends the text so far on some deltas, and a flush
+  landing in between made two records out of one reply, which reads exactly like a bot repeating itself.
+  A finished line now has the already-said part taken off it (`stripSpokenPrefix`), so the log, the panel and
+  the activity file carry each sentence once.
+- **A character change and a name call produced two answers to one moment.** After a character switch the new
+  session introduces itself, and the introduction went out even when somebody had just spoken to the bot — so
+  the room heard "ben Melis, burdayım" twice in two seconds: the introduction and the answer. The introduction
+  is skipped when anybody spoke in the last few seconds (`INTRO_QUIET_MS`), and the log says so.
+
 ## [1.21.2] — 2026-09-16
 
 ### Fixed

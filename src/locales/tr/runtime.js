@@ -116,6 +116,7 @@ export default {
 	tools_backend: 'backend',
 	tools_client: 'istemci',
 	intro_prompt: 'Yeni bir karaktere geçtin. Tek kısa cümleyle, bu karakterin üslubuyla kendini tanıt ve dinlemeye geç.',
+	log_intro_skipped: '[ses] tanıtım atlandı: biri zaten konuşuyordu',
 	greet_prompt: 'İlk yanıtın olarak, kimsenin konuşmasını beklemeden şunu söyle: "{text}". Sonra dinlemeye geç.',
 	greet_nudge: 'Şimdi konuşmaya başla.',
 	music_context: 'Şu an arka planda müzik çalıyor: {title}. Sen konuşurken müzik kısılır.',

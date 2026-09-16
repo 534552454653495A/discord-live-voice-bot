@@ -37,6 +37,20 @@ export function squash(text) {
 }
 
 /**
+ * Takes off the part that has already been said. Some transcript streams re-send the text so far on
+ * every delta, and a flush landing in between then records one sentence twice with the second copy
+ * carrying the first — which reads, in the log and the panel, exactly like the bot repeating itself.
+ * Returns the new part, or '' when nothing new arrived.
+ */
+export function stripSpokenPrefix(line, previous) {
+	const full = squash(line);
+	if (!full) return '';
+	const said = squash(previous);
+	if (!said || !full.startsWith(said)) return full;
+	return full.slice(said.length).trim();
+}
+
+/**
  * Character name -> character. Four stages: exact, prefix, contains, reverse-contains.
  * Reverse-contains (the search text contains the character name) is limited to names of 3+ letters;
  * otherwise a character called "A" matches every sentence.

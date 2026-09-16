@@ -116,6 +116,7 @@ export default {
 	tools_backend: 'backend',
 	tools_client: 'client',
 	intro_prompt: 'You have switched to a new character. In one short sentence, introduce yourself in this character\'s voice and then start listening.',
+	log_intro_skipped: '[voice] the introduction was skipped: somebody was already talking',
 	greet_prompt: 'As your very first reply, without waiting for anyone to speak, say this: "{text}". Then start listening.',
 	greet_nudge: 'Start talking now.',
 	music_context: 'There is music playing in the background right now: {title}. The music is turned down while you speak.',

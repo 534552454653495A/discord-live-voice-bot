@@ -26,7 +26,7 @@ import { SpeechSegmenter } from './localstt.js';
 import { LocalTts, firstClause, splitSentences } from './localtts.js';
 import { MemberIndex } from './matcher.js';
 import { Ducker, MusicPlayer } from './music.js';
-import { normalize, parseBool, stripDictationTail } from './text.js';
+import { normalize, parseBool, stripDictationTail, stripSpokenPrefix } from './text.js';
 import { callTool, toolDefinitions, toolOutput } from './tools.js';
 import { VoiceSession } from './voice.js';
 
@@ -39,6 +39,9 @@ const REJOIN_DELAYS_MS = [60_000, 180_000];
 // Latency measurement: in a full-duplex stream audio keeps arriving, so only replies that start after
 // a silence are measured; very short delays are not written out so they do not clutter the log.
 const SILENCE_GAP_MS = 600;
+// After a character switch the new session introduces itself in one line. If somebody has just spoken
+// to the bot, that introduction is a second answer to the same moment, so it is skipped instead.
+const INTRO_QUIET_MS = 6000;
 const MIN_LOGGED_MS = 300;
 // Peak the model's audio has to reach before it counts as "audible" (int16; about -44 dBFS).
 const AUDIO_PEAK_MIN = 200;
@@ -1040,7 +1043,11 @@ export class GuildSession {
 			);
 			if (this.pendingIntro) {
 				this.pendingIntro = false;
-				session.appendContext('commentary', t('runtime.intro_prompt'));
+				const lastHeard = this.recentSpeakers.size ? Math.max(...this.recentSpeakers.values()) : 0;
+				// The introduction is a reply of its own. If somebody has just spoken to the bot, the answer
+				// to them is the reply for this moment; saying both is how two voices land on one turn.
+				if (lastHeard && Date.now() - lastHeard < INTRO_QUIET_MS) this.log(t('runtime.log_intro_skipped'));
+				else session.appendContext('commentary', t('runtime.intro_prompt'));
 			} else if (cfg.greetText && !this.greeted) {
 				this.greeted = true;
 				session.appendContext('instructions', t('runtime.greet_prompt', { text: cfg.greetText }));
@@ -1433,10 +1440,17 @@ export class GuildSession {
 				.replace(/\s+/g, ' ')
 				.trim();
 			if (!line) return;
-			if (cfg.transcripts) this.log(t('runtime.transcript_out', { line }));
+			// Some transcript streams re-send the text so far: without this, one reply is recorded twice with
+			// the second copy carrying the first, which reads exactly like the bot repeating itself. Only the
+			// line just before it is compared, and only while it is recent.
+			const previous = this.lastSpokenLine && Date.now() - this.lastSpokenLine.at < 20_000 ? this.lastSpokenLine.text : '';
+			const fresh = stripSpokenPrefix(line, previous);
+			this.lastSpokenLine = { text: line, at: Date.now() };
+			if (!fresh) return;
+			if (cfg.transcripts) this.log(t('runtime.transcript_out', { line: fresh }));
 			// Local mode: this text is turned into speech by Chatterbox and pushed to Discord.
-			if (this.localMode) this.enqueueLocalSpeech(line);
-			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: line });
+			if (this.localMode) this.enqueueLocalSpeech(fresh);
+			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: fresh });
 			return;
 		}
 

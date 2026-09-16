@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { setLocale } from '../../src/i18n/index.js';
-import { balanceCodeFences, escapeHtml, findCharacter, normalize, parseBool, squash, stripDictationTail } from '../../src/text.js';
+import { balanceCodeFences, escapeHtml, findCharacter, normalize, parseBool, squash, stripDictationTail, stripSpokenPrefix } from '../../src/text.js';
 import { detectLanguage, splitSentences } from '../../src/localtts.js';
 
 // normalize() and detectLanguage() carry LANGUAGE DATA rather than user-visible text: normalize()
@@ -101,5 +101,17 @@ describe('localtts.js', () => {
 		assert.equal(detectLanguage('Привет, как дела?'), 'ru');
 		assert.equal(detectLanguage('Hallo, wie geht es dir? Ich bin müde.'), 'de');
 		assert.equal(detectLanguage('ok', 'tr'), 'tr', 'a short, ambiguous text takes the fallback');
+	});
+});
+
+describe('stripSpokenPrefix', () => {
+	// Heard live: one reply was recorded twice, the second copy carrying the first ("Ne oldu, şaşır" then
+	// "Ne oldu, şaşır İkinizi birden duyuyorum…"), which reads exactly like a bot repeating itself.
+	it('keeps only the new part when the same text arrives again', () => {
+		assert.equal(stripSpokenPrefix('Merhaba dünya', ''), 'Merhaba dünya');
+		assert.equal(stripSpokenPrefix('Ne oldu, şaşır', 'Ne oldu, şaşır'), '');
+		assert.equal(stripSpokenPrefix('Ne oldu, şaşır İkinizi birden duyuyorum', 'Ne oldu, şaşır'), 'İkinizi birden duyuyorum');
+		assert.equal(stripSpokenPrefix('Bambaşka bir cümle', 'Ne oldu'), 'Bambaşka bir cümle', 'a different line is left alone');
+		assert.equal(stripSpokenPrefix('  ', 'anything'), '');
 	});
 });
