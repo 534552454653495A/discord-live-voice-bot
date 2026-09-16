@@ -179,6 +179,7 @@ describe('toolCallFor', () => {
 			name: 'read_messages',
 			args: { channel: 'general', count: 5 },
 		});
+		assert.deepEqual(toolCallFor({ type: 'quiet', value: 'on' }, deps), { name: 'set_setting', args: { name: 'quiet', value: 'on' } });
 	});
 });
 
@@ -191,5 +192,34 @@ describe('auth.isPrivileged', () => {
 		assert.equal(isPrivileged({ userId: 'x', member: { permissions: { has: () => true } }, cfg }), true);
 		assert.equal(isPrivileged({ userId: 'x', member: { permissions: { has: () => false } }, cfg }), false);
 		assert.equal(isPrivileged({ userId: null, cfg }), false);
+	});
+});
+
+describe('parseVoiceCommand: quiet', () => {
+	it('hears what asks for silence (tr)', () => {
+		for (const line of ['melis sus', 'sus', 'sussana', 'susun', 'sessiz ol', 'kes sesini', 'sesini kes', 'kapa çeneni']) {
+			assert.deepEqual(turkish.parseVoiceCommand(line, [], trChannels), { type: 'quiet', value: 'on' }, line);
+		}
+	});
+	it('does not take a word that merely contains "sus" for the command (tr)', () => {
+		for (const line of ['susma', 'susmuyorum', 'susam', 'çok susadım', 'okuma odası sessiz']) {
+			assert.equal(turkish.parseVoiceCommand(line, [], trChannels), null, line);
+		}
+	});
+	// The suffix matters: "konuşabilir" takes -sin/-siniz, and a pattern that demanded the longer one
+	// would silently lose the plainest way to ask for the voice back.
+	it('hears the way back with the suffix the word actually takes (tr)', () => {
+		for (const line of ['konuşabilirsin', 'konuşabilirsiniz', 'konuşabilir', 'devam edebilirsin']) {
+			assert.deepEqual(turkish.parseVoiceCommand(line, [], trChannels), { type: 'quiet', value: 'off' }, line);
+		}
+	});
+	it('hears the English phrasings, and leaves a statement alone (en)', () => {
+		for (const line of ['be quiet', 'quiet down', 'shut up', 'hush']) {
+			assert.deepEqual(parseVoiceCommand(line, [], channels), { type: 'quiet', value: 'on' }, line);
+		}
+		assert.equal(parseVoiceCommand('the reading room is quiet', [], channels), null);
+		for (const line of ['you can speak again', 'speak again', 'you can talk']) {
+			assert.deepEqual(parseVoiceCommand(line, [], channels), { type: 'quiet', value: 'off' }, line);
+		}
 	});
 });

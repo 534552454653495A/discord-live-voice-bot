@@ -1521,7 +1521,11 @@ export class GuildSession {
 		if (!item.id) return refuse();
 		const command = parseVoiceCommand(item.line, this.store.list(), this.channelLists());
 		if (!command) return;
-		if (item.mixed && !HARMLESS_VOICE_ACTIONS.has(command.type)) return refuse();
+		// Quiet is the one state-changing command allowed off a mixed line: the tool behind it is
+		// owner-gated (who said the word, and whether anybody spoke over it), which is exactly the second
+		// check this shortcut lacks and the reason the mixed rule exists. Both live "sus" lines were
+		// flagged mixed, so refusing them here left the deterministic route permanently unused.
+		if (item.mixed && command.type !== 'quiet' && !HARMLESS_VOICE_ACTIONS.has(command.type)) return refuse();
 		const lineTurn = this.lineTurn(item);
 		const speakerId = String(item.id);
 		void executeAction(command, {

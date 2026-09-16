@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.2] — 2026-09-16
+
+### Fixed
+
+- **Quiet was refused on the lines it is most often said in.** The grammar matched "sus", but a line that is
+  not provably one person's refuses every command that is not harmless — and both "sus" lines in the live log
+  were flagged mixed, so the one route that needs no model silently did nothing. Quiet passes that check now:
+  the tool behind it is owner-gated (who said the word, and whether anybody spoke over it), which is exactly
+  the second check the mixed rule exists to stand in for.
+- **Some words the grammar listens for could not open the owner gate.** "kes sesini", "kapa çeneni" and
+  "devam edebilirsin" were parsed and then refused as "the owner did not say the keyword", and the refusal is
+  spoken — so asking to be quiet produced a sentence instead of silence. "kes", "kapa" and "edebilir" are gate
+  words now, written as stems, so "kesin" and "kapat" stay out.
+- **The quiet phrases have tests now** (the parser suite, both languages): the words that ask for silence, the
+  way back, and the ones that must not match — "susma", "susmuyorum", "susam", "çok susadım", "the reading
+  room is quiet".
+
 ## [1.16.1] — 2026-09-16
 
 ### Fixed
