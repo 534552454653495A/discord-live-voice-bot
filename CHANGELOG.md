@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] — 2026-09-16
+
+### Added
+
+- **The bot can draw.** "Draw a cat in a spacesuit" goes to the OpenAI images API and the picture is posted in
+  a text channel as an attachment. The caption is plain text and never pings anybody, and the message carries
+  a Discord link to the picture — which is exactly what `set_bot_appearance` takes, so "make that your avatar"
+  works on the picture it has just posted. Model and size come from `IMAGE_MODEL` / `IMAGE_SIZE`
+  (`gpt-image-1` and 1024x1024 by default); a picture costs money every time it is drawn, so one person is
+  held to three a minute and told so, instead of quietly failing.
+
 ## [1.19.0] — 2026-09-16
 
 ### Added

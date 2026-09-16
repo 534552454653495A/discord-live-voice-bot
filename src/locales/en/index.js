@@ -37,6 +37,7 @@ import toolsAutomod from './tools-automod.js';
 import toolsWebhooks from './tools-webhooks.js';
 import toolsServer from './tools-server.js';
 import toolsIdentity from './tools-identity.js';
+import toolsImages from './tools-images.js';
 import toolsReminders from './tools-reminders.js';
 
 export default {
@@ -72,6 +73,7 @@ export default {
 		memory: toolsMemory,
 		summary: toolsSummary,
 		identity: toolsIdentity,
+		images: toolsImages,
 		reminders: toolsReminders,
 		server: toolsServer,
 		webhooks: toolsWebhooks,

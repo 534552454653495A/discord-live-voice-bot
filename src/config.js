@@ -146,6 +146,9 @@ export function loadConfig(env = process.env) {
 		// OpenAI model for written replies (DM / mention). With DeepSeek configured the text goes there,
 		// while images are still handled by this OpenAI model.
 		textModel: str(env.TEXT_MODEL) ?? str(env.DELEGATION_MODEL) ?? 'gpt-5.6-luna',
+		// Drawing ("draw me X") goes to the OpenAI images API; model and size are passed straight through.
+		imageModel: str(env.IMAGE_MODEL, 'gpt-image-1'),
+		imageSize: str(env.IMAGE_SIZE, '1024x1024'),
 		deepseekApiKey,
 		deepseekBaseUrl: str(env.DEEPSEEK_BASE_URL, 'https://api.deepseek.com'),
 		deepseekModel: str(env.DEEPSEEK_MODEL, 'deepseek-chat'),

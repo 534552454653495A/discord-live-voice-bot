@@ -19,6 +19,7 @@ import { tools as automodTools } from './automod.js';
 import { tools as webhooksTools } from './webhooks.js';
 import { tools as serverTools } from './server.js';
 import { tools as identityTools } from './identity.js';
+import { tools as imageTools } from './images.js';
 import { ownerGate } from './helpers.js';
 import { t } from '../i18n/index.js';
 
@@ -34,6 +35,7 @@ for (const list of [
 	memoryTools,
 	summaryTools,
 	identityTools,
+	imageTools,
 	serverTools,
 	webhooksTools,
 	automodTools,
