@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1] — 2026-09-16
+
+### Fixed
+
+- **The video tests would not run on a machine that has no yt-dlp.** They asked the path resolver to find a
+  binary, and on CI — where `tools/bin` is not part of the checkout — the injected double answered only the run
+  half: a real child emits both "exit" and "close", the probe waits for the former, and the test hung until the
+  runner killed it (green here only because this machine happens to keep a downloaded yt-dlp). The tests now
+  point the reader at a binary that exists everywhere — the running node — and say that no download may happen,
+  so nothing about them depends on the machine; the double answers both events as well. Nothing about the bot
+  itself changed.
+
 ## [1.21.0] — 2026-09-16
 
 ### Added

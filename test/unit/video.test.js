@@ -14,27 +14,36 @@ function fakeSpawn({ info, withSubtitles = true }) {
 		child.stderr = new EventEmitter();
 		child.kill = () => {};
 		setImmediate(() => {
+			const done = (code) => {
+				// A real child emits both; the path probe listens for "exit", the runner for "close".
+				child.emit('exit', code);
+				child.emit('close', code);
+			};
 			if (args.includes('-j')) {
 				child.stdout.emit('data', Buffer.from(JSON.stringify(info)));
-				child.emit('close', 0);
+				done(0);
 				return;
 			}
 			if (args.includes('--write-subs')) {
 				if (!withSubtitles) {
-					child.emit('close', 1);
+					done(1);
 					return;
 				}
 				const out = args[args.indexOf('-o') + 1];
 				const srt = ['1', '00:00:00,000 --> 00:00:02,000', '<i>ilk</i> satır', '', '2', '00:00:02,000 --> 00:00:04,000', 'ikinci satır', ''].join('\n');
 				writeFileSync(path.join(path.dirname(out), `${info.id}.tr.srt`), srt, 'utf8');
-				child.emit('close', 0);
+				done(0);
 				return;
 			}
-			child.emit('close', 0);
+			done(0);
 		});
 		return child;
 	};
 }
+
+// The binary the reader is pointed at: one that exists everywhere, so no test asks for a download and
+// none depends on yt-dlp being installed on the machine.
+const BINARY = process.execPath;
 
 const INFO = { id: 'abc123', title: 'Bir video', duration: 300, webpage_url: 'https://www.youtube.com/watch?v=abc123' };
 const VIDEO = {
@@ -59,7 +68,12 @@ describe('srtToText', () => {
 describe('fetchVideo', () => {
 	it('reads the subtitles into a transcript, and remembers it by id and by title', async () => {
 		forgetVideos();
-		const video = await fetchVideo('https://www.youtube.com/watch?v=abc123', { spawnImpl: fakeSpawn({ info: INFO }), log: () => {} });
+		const video = await fetchVideo('https://www.youtube.com/watch?v=abc123', {
+			ytDlpPath: BINARY,
+			autoDownload: false,
+			spawnImpl: fakeSpawn({ info: INFO }),
+			log: () => {},
+		});
 		assert.equal(video.id, 'abc123');
 		assert.equal(video.title, 'Bir video');
 		assert.match(video.transcript, /ilk satır ikinci satır/);
@@ -70,7 +84,13 @@ describe('fetchVideo', () => {
 	it('says there are no subtitles rather than inventing a transcript', async () => {
 		forgetVideos();
 		await assert.rejects(
-			() => fetchVideo('https://www.youtube.com/watch?v=abc123', { spawnImpl: fakeSpawn({ info: INFO, withSubtitles: false }), log: () => {} }),
+			() =>
+				fetchVideo('https://www.youtube.com/watch?v=abc123', {
+					ytDlpPath: BINARY,
+					autoDownload: false,
+					spawnImpl: fakeSpawn({ info: INFO, withSubtitles: false }),
+					log: () => {},
+				}),
 			(err) => err.reason === 'no-subtitles',
 		);
 	});
