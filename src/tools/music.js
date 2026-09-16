@@ -2,6 +2,7 @@
 
 import { t } from '../i18n/index.js';
 import { QUEUE_FULL, UNSUPPORTED_LINK, YTDLP_MISSING } from '../music.js';
+import { MAX_SAVED_PER_USER, pickSaved } from '../savedtracks.js';
 import { P, defineTool } from './registry.js';
 
 /** The player is not wired up (.env: MUSIC=0); every music tool answers the same way. */
@@ -11,6 +12,21 @@ function noMusic() {
 
 function musicEvent(deps, text, meta = {}) {
 	deps.activity?.({ kind: 'music', whoName: deps.personaName?.() ?? 'bot', text, meta });
+}
+
+/** Who is asking: saved lists and "I meant this one" belong to people, not to the channel. */
+function speakerOf(deps) {
+	const id = deps.currentSpeakerId?.() ?? null;
+	return { id: id ? String(id) : null, name: deps.currentSpeakerName?.() ?? null };
+}
+
+/** yt-dlp's stderr can echo back what a fetched page said, so only our own reasons are spoken. */
+function playFailure(err, deps) {
+	deps.log?.(t('tools.music.log_play_failed', { error: err.message }));
+	if (err.message === UNSUPPORTED_LINK) return { ok: false, spoken: t('tools.music.unsupported_link') };
+	if (err.message === QUEUE_FULL) return { ok: false, spoken: t('tools.music.queue_full') };
+	if (err.message === YTDLP_MISSING) return { ok: false, spoken: t('tools.music.ytdlp_missing') };
+	return { ok: false, spoken: t('tools.music.play_failed_generic') };
 }
 
 export const tools = [
@@ -47,12 +63,7 @@ export const tools = [
 					data: { title: track.title, uploader: track.uploader, duration: track.duration, position, started_now: startedNow },
 				};
 			} catch (err) {
-				deps.log?.(t('tools.music.log_play_failed', { error: err.message }));
-				// yt-dlp's stderr can echo back what a fetched page said, so only our own reasons are spoken.
-				if (err.message === UNSUPPORTED_LINK) return { ok: false, spoken: t('tools.music.unsupported_link') };
-				if (err.message === QUEUE_FULL) return { ok: false, spoken: t('tools.music.queue_full') };
-				if (err.message === YTDLP_MISSING) return { ok: false, spoken: t('tools.music.ytdlp_missing') };
-				return { ok: false, spoken: t('tools.music.play_failed_generic') };
+				return playFailure(err, deps);
 			}
 		},
 	}),
@@ -165,6 +176,117 @@ export const tools = [
 			if (!removed) return { ok: false, spoken: t('tools.music.queue_not_found') };
 			musicEvent(deps, t('tools.music.removed_event', { title: removed.title }));
 			return { ok: true, spoken: t('tools.music.removed', { title: removed.title }), data: { title: removed.title } };
+		},
+	}),
+
+	defineTool({
+		name: 'save_track',
+		description:
+			"Keeps a track in this person's own saved list, to be played again by name later. Without an argument it saves " +
+			'what is playing now; with a query it looks the track up first.',
+		parameters: P.obj({ query: P.str('Song title (+ artist) or URL; empty = what is playing now') }),
+		async handler(args, deps) {
+			if (!deps.savedTracks) return { ok: false, spoken: t('tools.music.save_disabled') };
+			if (!deps.music) return noMusic();
+			const speaker = speakerOf(deps);
+			if (!speaker.id) return { ok: false, spoken: t('tools.music.save_no_speaker') };
+			const query = String(args.query ?? '').trim();
+			let track = null;
+			try {
+				track = query ? await deps.music.resolve(query) : deps.music.current;
+			} catch (err) {
+				return playFailure(err, deps);
+			}
+			if (!track) return { ok: false, spoken: t('tools.music.save_nothing_playing') };
+			const saved = deps.savedTracks.add({
+				userId: speaker.id,
+				userName: speaker.name,
+				title: track.title,
+				ref: track.url ?? track.query ?? track.title,
+				kind: track.kind,
+			});
+			if (!saved) return { ok: false, spoken: t('tools.music.save_full', { max: MAX_SAVED_PER_USER }) };
+			if (saved.duplicate) {
+				return { ok: true, spoken: t('tools.music.saved_already', { title: saved.title }), data: { id: saved.id, duplicate: true } };
+			}
+			await deps.savedTracks.save();
+			musicEvent(deps, t('tools.music.saved_event', { title: saved.title }), { source: saved.kind });
+			return { ok: true, spoken: t('tools.music.saved', { title: saved.title }), data: { id: saved.id, title: saved.title } };
+		},
+	}),
+
+	defineTool({
+		name: 'list_saved',
+		description: 'Lists the tracks this person has saved.',
+		async handler(args, deps) {
+			if (!deps.savedTracks) return { ok: false, spoken: t('tools.music.save_disabled') };
+			const items = deps.savedTracks.list(speakerOf(deps).id);
+			if (!items.length) return { ok: true, spoken: t('tools.music.saved_empty'), data: { items: [] } };
+			const lines = items.map((item, index) => `${index + 1}. ${item.title}`).join(', ');
+			return {
+				ok: true,
+				spoken: t('tools.music.saved_list', { count: items.length, lines }),
+				data: { items: items.map((item, index) => ({ index: index + 1, id: item.id, title: item.title })) },
+			};
+		},
+	}),
+
+	defineTool({
+		name: 'remove_saved',
+		description: "Takes a track out of this person's saved list: its number in the list, or a few words from its title.",
+		parameters: P.obj({ query: P.str('Number in the list, or words from the title') }, ['query']),
+		async handler(args, deps) {
+			if (!deps.savedTracks) return { ok: false, spoken: t('tools.music.save_disabled') };
+			const speaker = speakerOf(deps);
+			const needle = String(args.query ?? '').trim();
+			const wanted = needle ? pickSaved(deps.savedTracks.list(speaker.id), needle) : null;
+			if (!wanted) {
+				return { ok: false, spoken: needle ? t('tools.music.saved_not_found', { text: needle }) : t('tools.music.saved_which') };
+			}
+			deps.savedTracks.remove(speaker.id, wanted.id);
+			await deps.savedTracks.save();
+			musicEvent(deps, t('tools.music.saved_removed_event', { title: wanted.title }));
+			return { ok: true, spoken: t('tools.music.saved_removed', { title: wanted.title }), data: { id: wanted.id } };
+		},
+	}),
+
+	defineTool({
+		name: 'play_saved',
+		description: 'Plays what this person saved: one track (its number in the list, or words from its title) or the whole list.',
+		parameters: P.obj({ query: P.str('Number in the list, or words from a title'), all: P.bool('true = the whole saved list') }),
+		async handler(args, deps) {
+			if (!deps.savedTracks) return { ok: false, spoken: t('tools.music.save_disabled') };
+			if (!deps.music) return noMusic();
+			const speaker = speakerOf(deps);
+			const items = deps.savedTracks.list(speaker.id);
+			if (!items.length) return { ok: true, spoken: t('tools.music.saved_empty'), data: { queued: 0 } };
+			const needle = String(args.query ?? '').trim();
+			const wanted = args.all === true || !needle ? items : [pickSaved(items, needle)].filter(Boolean);
+			if (!wanted.length) return { ok: false, spoken: t('tools.music.saved_not_found', { text: needle }) };
+			let queued = 0;
+			let failed = 0;
+			let lastError = null;
+			for (const item of wanted) {
+				try {
+					await deps.music.enqueue(item.ref, { requestedBy: speaker.name });
+					queued += 1;
+				} catch (err) {
+					lastError = err;
+					// A full queue is a stop, not a reason to keep asking: nothing else will fit either.
+					if (err.message === QUEUE_FULL) break;
+					failed += 1;
+				}
+			}
+			if (!queued) {
+				return lastError?.message === QUEUE_FULL ? playFailure(lastError, deps) : { ok: false, spoken: t('tools.music.saved_none_played') };
+			}
+			const spoken =
+				wanted.length === 1 && queued === 1
+					? t('tools.music.saved_playing', { title: wanted[0].title })
+					: failed
+						? t('tools.music.saved_partial', { count: queued, failed })
+						: t('tools.music.saved_queued', { count: queued });
+			return { ok: true, spoken, data: { queued, failed, titles: wanted.map((item) => item.title) } };
 		},
 	}),
 ];

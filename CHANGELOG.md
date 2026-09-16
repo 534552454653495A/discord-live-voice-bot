@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] — 2026-09-16
+
+### Added
+
+- **Saved tracks, one list per person.** "Save this one" keeps what is playing — or a track it looks up by name
+  first — in `data/saved-tracks.json`, and "play what I saved" puts the list back on: one track by its number in
+  the list or a few words from its title, or the whole list. The same track saved twice stays one entry, a list
+  is capped at fifty tracks, and somebody else's list is neither readable nor editable: these belong to people,
+  not to the server. A queue that will take nothing during a list playback is said out loud instead of leaving
+  half the request quietly undone.
+
 ## [1.18.0] — 2026-09-16
 
 ### Added

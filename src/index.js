@@ -31,6 +31,7 @@ import { createTextProvider } from './provider.js';
 import { DailyQuota } from './quota.js';
 import { ChannelReader } from './reader.js';
 import { ReminderStore } from './reminders.js';
+import { SavedTracks } from './savedtracks.js';
 import { CharacterStore } from './store.js';
 import { summarizeConversation } from './summary.js';
 import { callTool, toolDefinitions } from './tools.js';
@@ -56,6 +57,8 @@ const memory = cfg.memoryEnabled ? await new MemoryStore(path.join(dataDir, 'mem
 const quota = await new DailyQuota({ limitSeconds: cfg.dailyLiveSeconds, file: path.join(dataDir, 'quota.json') }).load();
 // Reminders outlive the process: they are read back on start and spoken by the ticker further down.
 const reminders = await new ReminderStore(path.join(dataDir, 'reminders.json'), { log }).load();
+// Saved tracks: one list per person, to be played again by name later.
+const savedTracks = await new SavedTracks(path.join(dataDir, 'saved-tracks.json'), { log }).load();
 const recentActions = new RecentActions();
 const reader = new ChannelReader({ defaultLimit: cfg.readLimit });
 const replyLimiter = new ReplyLimiter({ perMinute: 6 });
@@ -150,6 +153,7 @@ async function ensureSession(guildId, channelId = null) {
 		reader,
 		recentActions,
 		reminders,
+		savedTracks,
 		activity,
 		record,
 		provider,
