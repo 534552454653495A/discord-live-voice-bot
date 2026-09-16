@@ -55,7 +55,7 @@ export default {
 	local_stt_error: 'Yerel STT hatası: {error}',
 	local_brain_no_reply: 'Yerel beyin cevap üretemedi: {error}',
 	source_local_brain: 'yerel beyin',
-	note_action: '(uygulama, {name} için) {text}',
+	note_action: '(uygulama bunu yaptı ve söyledi, {name} için) {text}',
 	note_self_said: '(sen söyledin) {text}',
 	barge_in: 'Söz kesildi; bot susuyor.',
 	someone: 'biri',

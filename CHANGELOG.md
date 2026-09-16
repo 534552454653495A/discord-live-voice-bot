@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] — 2026-09-16
+
+### Added
+
+- **The bot says a thing once.** Heard live: a track is asked for, the bot says it is starting it, and then
+  says that it is playing — one piece of news announced twice, and the second time is noise. The standing
+  instructions now say what to do instead: announce a result once, do not re-announce what a tool has already
+  reported, do not answer a question that has already been answered, and say nothing when nothing has changed
+  since the last line. The note the application leaves when it carried a command out itself ("the app already
+  did this and said it") says so too, and the local brain's instructions carry the same rule.
+
 ## [1.16.2] — 2026-09-16
 
 ### Fixed

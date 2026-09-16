@@ -55,7 +55,7 @@ export default {
 	local_stt_error: 'Local STT error: {error}',
 	local_brain_no_reply: 'The local brain could not produce a reply: {error}',
 	source_local_brain: 'local brain',
-	note_action: '(action, for {name}) {text}',
+	note_action: '(the app already did this and said it, for {name}) {text}',
 	note_self_said: '(you said) {text}',
 	barge_in: 'Interrupted; the bot goes quiet.',
 	someone: 'someone',
