@@ -38,6 +38,7 @@ import toolsWebhooks from './tools-webhooks.js';
 import toolsServer from './tools-server.js';
 import toolsIdentity from './tools-identity.js';
 import toolsImages from './tools-images.js';
+import toolsVideos from './tools-videos.js';
 import toolsReminders from './tools-reminders.js';
 
 export default {
@@ -74,6 +75,7 @@ export default {
 		summary: toolsSummary,
 		identity: toolsIdentity,
 		images: toolsImages,
+		videos: toolsVideos,
 		reminders: toolsReminders,
 		server: toolsServer,
 		webhooks: toolsWebhooks,

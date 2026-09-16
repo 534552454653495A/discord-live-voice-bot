@@ -18,6 +18,7 @@ import { tools as eventsTools } from './events.js';
 import { tools as automodTools } from './automod.js';
 import { tools as webhooksTools } from './webhooks.js';
 import { tools as serverTools } from './server.js';
+import { tools as videoTools } from './video.js';
 import { tools as identityTools } from './identity.js';
 import { tools as imageTools } from './images.js';
 import { ownerGate } from './helpers.js';
@@ -37,6 +38,7 @@ for (const list of [
 	identityTools,
 	imageTools,
 	serverTools,
+	videoTools,
 	webhooksTools,
 	automodTools,
 	eventsTools,

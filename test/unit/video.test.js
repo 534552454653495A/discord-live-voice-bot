@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { describe, it } from 'node:test';
+import { callTool } from '../../src/tools/index.js';
+import { fetchVideo, forgetVideos, recallVideo, rememberVideo, srtToText } from '../../src/video.js';
+
+/** A yt-dlp double: metadata to stdout, and (unless it fails) one subtitle file where -o points. */
+function fakeSpawn({ info, withSubtitles = true }) {
+	return (binary, args) => {
+		const child = new EventEmitter();
+		child.stdout = new EventEmitter();
+		child.stderr = new EventEmitter();
+		child.kill = () => {};
+		setImmediate(() => {
+			if (args.includes('-j')) {
+				child.stdout.emit('data', Buffer.from(JSON.stringify(info)));
+				child.emit('close', 0);
+				return;
+			}
+			if (args.includes('--write-subs')) {
+				if (!withSubtitles) {
+					child.emit('close', 1);
+					return;
+				}
+				const out = args[args.indexOf('-o') + 1];
+				const srt = ['1', '00:00:00,000 --> 00:00:02,000', '<i>ilk</i> satır', '', '2', '00:00:02,000 --> 00:00:04,000', 'ikinci satır', ''].join('\n');
+				writeFileSync(path.join(path.dirname(out), `${info.id}.tr.srt`), srt, 'utf8');
+				child.emit('close', 0);
+				return;
+			}
+			child.emit('close', 0);
+		});
+		return child;
+	};
+}
+
+const INFO = { id: 'abc123', title: 'Bir video', duration: 300, webpage_url: 'https://www.youtube.com/watch?v=abc123' };
+const VIDEO = {
+	id: 'abc123',
+	title: 'Bir video',
+	url: 'https://youtu.be/abc123',
+	duration: 300,
+	uploader: null,
+	lang: 'tr',
+	transcript: 'bir iki üç dört beş',
+	chars: 20,
+	fetchedAt: Date.now(),
+};
+
+describe('srtToText', () => {
+	it('keeps the words and drops the cue numbers, the times and the tags', () => {
+		const srt = ['1', '00:00:01,000 --> 00:00:03,000', '<i>Merhaba</i> dünya', '', '2', '00:00:03,100 --> 00:00:05,000', 'ikinci satır', ''].join('\n');
+		assert.equal(srtToText(srt), 'Merhaba dünya ikinci satır');
+	});
+});
+
+describe('fetchVideo', () => {
+	it('reads the subtitles into a transcript, and remembers it by id and by title', async () => {
+		forgetVideos();
+		const video = await fetchVideo('https://www.youtube.com/watch?v=abc123', { spawnImpl: fakeSpawn({ info: INFO }), log: () => {} });
+		assert.equal(video.id, 'abc123');
+		assert.equal(video.title, 'Bir video');
+		assert.match(video.transcript, /ilk satır ikinci satır/);
+		assert.equal(recallVideo().id, 'abc123', 'the newest read is what a follow-up question means');
+		assert.equal(recallVideo('bir video').id, 'abc123');
+	});
+
+	it('says there are no subtitles rather than inventing a transcript', async () => {
+		forgetVideos();
+		await assert.rejects(
+			() => fetchVideo('https://www.youtube.com/watch?v=abc123', { spawnImpl: fakeSpawn({ info: INFO, withSubtitles: false }), log: () => {} }),
+			(err) => err.reason === 'no-subtitles',
+		);
+	});
+});
+
+describe('video tools', () => {
+	function toolDeps({ provider = true } = {}) {
+		return {
+			guild: { channels: { cache: new Map() } },
+			cfg: { textChannelId: null },
+			fetchVideo: async () => rememberVideo(VIDEO),
+			provider: provider
+				? { available: true, complete: async ({ instructions }) => (instructions.includes('part') ? 'parça özeti' : 'tam özet') }
+				: null,
+			currentSpeakerId: () => 'u1',
+			personaName: () => 'Aria',
+			activity: () => {},
+			log: () => {},
+		};
+	}
+
+	it('reads a video, hands out the transcript and summarises it', async () => {
+		forgetVideos();
+		const deps = toolDeps();
+		const watched = await callTool('watch_video', { video: 'bir video' }, deps);
+		assert.equal(watched.ok, true, watched.spoken);
+		assert.match(watched.spoken, /Bir video/);
+
+		const part = await callTool('video_transcript', { limit: 5 }, deps);
+		assert.equal(part.ok, true, part.spoken);
+		assert.match(part.data.transcript, /^bir /);
+
+		const summary = await callTool('summarize_video', {}, deps);
+		assert.equal(summary.ok, true, summary.spoken);
+		assert.equal(summary.data.summary, 'parça özeti');
+	});
+
+	it('answers when nothing has been read, and when there is no text model', async () => {
+		forgetVideos();
+		const deps = toolDeps();
+		assert.equal((await callTool('video_transcript', {}, deps)).ok, false);
+		assert.equal((await callTool('summarize_video', {}, toolDeps({ provider: false }))).ok, false);
+	});
+});

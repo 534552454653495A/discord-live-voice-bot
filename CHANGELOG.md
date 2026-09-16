@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] — 2026-09-16
+
+### Added
+
+- **The bot can read a video.** A link, or a name it has to look up, goes to yt-dlp with subtitles on — the ones
+  somebody wrote first, machine-made ones when there are none — and what comes back is a transcript kept in
+  memory (the last eight videos, newest last; nothing on disk). `watch_video` reads it, `video_transcript` hands
+  out a slice so a question about the video can be answered, and `summarize_video` sums it up in a few
+  sentences, chunk by chunk when it is long, and can post that summary in a channel. A video with no subtitles is
+  answered as such rather than guessed at.
+
+### Changed
+
+- The yt-dlp lookup moved out of the music player into a shared helper (`ensureYtDlpPath`, `runCommand`), so the
+  player and the video reader find the same binary — same search order, same supply-chain decision about
+  downloading one.
+
 ## [1.20.0] — 2026-09-16
 
 ### Added

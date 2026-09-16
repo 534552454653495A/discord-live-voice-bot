@@ -94,6 +94,79 @@ export const YTDLP_MISSING = 'ytdlp-missing';
 
 const isUrl = (text) => /^https?:\/\//i.test(String(text ?? '').trim());
 
+/** Where a downloaded yt-dlp lives when nothing else points at one. */
+export const DEFAULT_YTDLP_DIR = path.join(here, '..', 'tools', 'bin');
+
+/**
+ * Finds yt-dlp: the configured path, then tools/bin, then PATH. With autoDownload off it says what to
+ * install instead of fetching anything; the binary comes from the GitHub releases when it is on.
+ * Shared by the music player and the video reader, so both find the same one.
+ */
+export async function ensureYtDlpPath({ preferred = null, binDir = DEFAULT_YTDLP_DIR, autoDownload = true, log = () => {}, spawnImpl = spawn } = {}) {
+	const candidates = [preferred, path.join(binDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')].filter(Boolean);
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	if (await onPath('yt-dlp', spawnImpl)) return 'yt-dlp';
+	if (!autoDownload) throw new Error(YTDLP_MISSING);
+	// Download it (from the GitHub releases), ~10 MB.
+	const target = candidates[candidates.length - 1];
+	log(t('music.log_ytdlp_download', { target }));
+	await mkdir(path.dirname(target), { recursive: true });
+	const YTDlpWrap = require('yt-dlp-wrap').default ?? require('yt-dlp-wrap');
+	await YTDlpWrap.downloadFromGithub(target);
+	return target;
+}
+
+/** Is this binary runnable? `--version` is the whole test. */
+function onPath(binary, spawnImpl) {
+	return new Promise((resolve) => {
+		try {
+			const child = spawnImpl(binary, ['--version'], { stdio: 'ignore', windowsHide: true });
+			child.once('error', () => resolve(false));
+			child.once('exit', (code) => resolve(code === 0));
+		} catch {
+			resolve(false);
+		}
+	});
+}
+
+/**
+ * Runs a command and collects its output; the caller decides what a failure means. `reason` tells a
+ * timeout from a spawn failure from a non-zero exit, so each caller can word the answer its own way.
+ * Shared by the music player's lookups and the video reader.
+ */
+export function runCommand(binary, args, { timeoutMs = 30_000, spawnImpl = spawn } = {}) {
+	return new Promise((resolve, reject) => {
+		let out = '';
+		let err = '';
+		const child = spawnImpl(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+		const timer = setTimeout(() => {
+			try {
+				child.kill();
+			} catch {
+				/* ignore */
+			}
+			reject(Object.assign(new Error('timed out'), { reason: 'timeout' }));
+		}, timeoutMs);
+		child.stdout?.on('data', (chunk) => (out += chunk));
+		child.stderr?.on('data', (chunk) => (err += chunk));
+		child.once('error', (error) => {
+			clearTimeout(timer);
+			reject(Object.assign(new Error(error.message), { reason: 'spawn' }));
+		});
+		child.once('close', (code) => {
+			clearTimeout(timer);
+			if (code === 0) {
+				resolve(out);
+				return;
+			}
+			const detail = (err.trim().split('\n').pop() ?? '').replace(/^ERROR:\s*/u, '');
+			reject(Object.assign(new Error(detail || `exit ${code}`), { reason: 'exit', code }));
+		});
+	});
+}
+
 /** A link we are willing to hand to yt-dlp. */
 export function isAllowedMediaUrl(text) {
 	let url;
@@ -179,43 +252,16 @@ export class MusicPlayer {
 	/** Finds the yt-dlp path; if there is none, downloads it into tools/bin (once). */
 	async ensureYtDlp() {
 		if (this.ytDlp) return this.ytDlp;
-		const candidates = [
-			this.ytDlpPreferred,
-			path.join(this.binDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'),
-		].filter(Boolean);
-		for (const candidate of candidates) {
-			if (existsSync(candidate)) {
-				this.ytDlp = candidate;
-				return candidate;
-			}
-		}
-		if (await this._onPath('yt-dlp')) {
-			this.ytDlp = 'yt-dlp';
-			return 'yt-dlp';
-		}
-		// Nothing installed. Fetching a binary and running it is a supply-chain decision, so it is the
-		// operator's to make: with autoDownload off we say what to install instead of doing it silently.
-		if (!this.autoDownload) throw new Error(YTDLP_MISSING);
-		// Download it (from the GitHub releases), ~10 MB.
-		const target = candidates[candidates.length - 1];
-		this.log(t('music.log_ytdlp_download', { target }));
-		await mkdir(path.dirname(target), { recursive: true });
-		const YTDlpWrap = require('yt-dlp-wrap').default ?? require('yt-dlp-wrap');
-		await YTDlpWrap.downloadFromGithub(target);
-		this.ytDlp = target;
-		return target;
-	}
-
-	_onPath(binary) {
-		return new Promise((resolve) => {
-			try {
-				const child = this.spawn(binary, ['--version'], { stdio: 'ignore', windowsHide: true });
-				child.once('error', () => resolve(false));
-				child.once('exit', (code) => resolve(code === 0));
-			} catch {
-				resolve(false);
-			}
+		// Fetching a binary and running it is a supply-chain decision, so it is the operator's to make:
+		// with autoDownload off we say what to install instead of doing it silently.
+		this.ytDlp = await ensureYtDlpPath({
+			preferred: this.ytDlpPreferred,
+			binDir: this.binDir,
+			autoDownload: this.autoDownload,
+			log: this.log,
+			spawnImpl: this.spawn,
 		});
+		return this.ytDlp;
 	}
 
 	/** Resolves text into track info: a local file, a URL or a YouTube search. */
@@ -282,29 +328,12 @@ export class MusicPlayer {
 	}
 
 	_run(binary, args, timeoutMs) {
-		return new Promise((resolve, reject) => {
-			let out = '';
-			let err = '';
-			const child = this.spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-			const timer = setTimeout(() => {
-				try {
-					child.kill();
-				} catch {
-					/* ignore */
-				}
-				reject(new Error(t('music.error_search_timeout')));
-			}, timeoutMs);
-			child.stdout.on('data', (chunk) => (out += chunk));
-			child.stderr.on('data', (chunk) => (err += chunk));
-			child.once('error', (error) => {
-				clearTimeout(timer);
-				reject(new Error(t('music.error_spawn_failed', { binary: path.basename(String(binary)), message: error.message })));
-			});
-			child.once('close', (code) => {
-				clearTimeout(timer);
-				if (code === 0) resolve(out);
-				else reject(new Error((err.trim().split('\n').pop() ?? '').replace(/^ERROR:\s*/, '') || t('music.error_exit_code', { code })));
-			});
+		return runCommand(binary, args, { timeoutMs, spawnImpl: this.spawn }).catch((err) => {
+			if (err.reason === 'timeout') throw new Error(t('music.error_search_timeout'));
+			if (err.reason === 'spawn') {
+				throw new Error(t('music.error_spawn_failed', { binary: path.basename(String(binary)), message: err.message }));
+			}
+			throw new Error(err.message || t('music.error_exit_code', { code: err.code }));
 		});
 	}
 
