@@ -200,7 +200,8 @@ Voice commands, tools and the owner gate all work in this mode. Web search does 
 `http://127.0.0.1:8787` — bound to loopback only, with a Host-header check against DNS rebinding.
 It shows DMs and channel replies, voice transcripts, tool calls, gate decisions, latency, music and
 memory, and can export the log as JSONL. `/healthz` returns a status object and `/metrics` exposes
-Prometheus counters.
+Prometheus counters. The OpenAI and DeepSeek keys can be entered here as well: they are written into
+`.env` (a copy of the old file is kept first) and are never shown back in full.
 
 Set `PANEL=0` to turn it off, or `RECORD_TRANSCRIPTS=0` to keep message and transcript text out of
 `data/activity.jsonl` entirely (events are still counted).

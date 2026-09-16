@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] — 2026-09-16
+
+### Added
+
+- **The API keys can be entered in the panel.** `http://127.0.0.1:8787` carries a small form for the OpenAI and
+  DeepSeek keys: it writes them into `.env` — the file they are read from at start — replacing the line where it
+  already exists (comments and the rest of the file survive), keeping a timestamped copy of the file first, and
+  never putting a key value into a log or an answer (only `sk-pro…cdef`-style hints). A changed OpenAI key is
+  picked up by the next voice session on its own; the text and drawing clients are built at start, so the panel
+  says a restart is needed for those. The endpoint answers `GET` with the masked state and takes a `POST` only as
+  JSON from the panel's own origin, with bodies capped at 4 KB.
+
 ## [1.21.3] — 2026-09-16
 
 ### Fixed

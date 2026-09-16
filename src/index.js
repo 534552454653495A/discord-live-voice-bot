@@ -20,6 +20,7 @@ import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
 import { OpenAI } from 'openai';
 import { handleInteraction, RecentActions, registerCommands } from './commands.js';
 import { loadConfig } from './config.js';
+import { maskSecret, updateEnvFile } from './envfile.js';
 import { GuildSession } from './guildsession.js';
 import { t, tList } from './i18n/index.js';
 import { LocalServerManager, detectVenvPython } from './localserver.js';
@@ -112,6 +113,42 @@ const localStt = new LocalStt({ url: cfg.localSttUrl, language: cfg.localSttLang
 let client = null;
 let panel = null;
 let shuttingDown = false;
+
+// ---------------------------------------------------------------- keys
+
+// The panel can write the two API keys into .env, the file they are read from at start. A new voice
+// session picks a changed OpenAI key up on its own; the clients built above (text, drawing) are the old
+// key until the next start, which is what the panel's answer says.
+const envFile = path.join(here, '..', '.env');
+const KEY_RULES = [
+	{ key: 'OPENAI_API_KEY', field: 'openai', pattern: /^sk-[A-Za-z0-9_-]{20,}$/u, label: 'runtime.key_bad_openai' },
+	{ key: 'DEEPSEEK_API_KEY', field: 'deepseek', pattern: /^sk-[A-Za-z0-9_-]{20,}$/u, label: 'runtime.key_bad_deepseek' },
+];
+
+/** Writes the keys the panel was given; returns what the panel should say back. */
+async function applyKeys(patch = {}) {
+	const writes = {};
+	for (const rule of KEY_RULES) {
+		const value = String(patch?.[rule.field] ?? '').trim();
+		if (!value) continue;
+		if (!rule.pattern.test(value)) return { ok: false, error: t(rule.label) };
+		writes[rule.key] = value;
+	}
+	if (!Object.keys(writes).length) return { ok: false, error: t('runtime.key_nothing') };
+	let result;
+	try {
+		result = await updateEnvFile(envFile, writes);
+	} catch (err) {
+		log(t('runtime.key_write_failed', { error: err.message }));
+		return { ok: false, error: t('runtime.key_write_failed', { error: err.message }) };
+	}
+	if (writes.OPENAI_API_KEY) cfg.openaiApiKey = writes.OPENAI_API_KEY;
+	if (writes.DEEPSEEK_API_KEY) cfg.deepseekApiKey = writes.DEEPSEEK_API_KEY;
+	const hints = Object.values(writes).map((value) => maskSecret(value)).join(' ');
+	log(t('runtime.keys_updated', { keys: result.changed.join(', '), hints }));
+	activity.push({ kind: 'session', text: t('runtime.keys_updated', { keys: result.changed.join(', '), hints }) });
+	return { ok: true, changed: result.changed, message: t('runtime.keys_saved') };
+}
 
 // ---------------------------------------------------------------- session registry
 
@@ -543,6 +580,9 @@ client.once(Events.ClientReady, async () => {
 					activity,
 					port: cfg.panelPort,
 					log,
+					// The keys may be entered here; they are written to .env, which is where they are read from.
+					keys: () => ({ openai: maskSecret(cfg.openaiApiKey), deepseek: maskSecret(cfg.deepseekApiKey) }),
+					applyKeys: (patch) => applyKeys(patch),
 					// Who is speaking can be someone in any of the servers, so every session gets asked.
 					nameFor: (userId) => nameForUser(userId),
 					state: () => {

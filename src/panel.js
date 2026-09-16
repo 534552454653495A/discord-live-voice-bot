@@ -244,6 +244,14 @@ const PAGE = `<!doctype html>
 	</div>
 	<div class="grid" id="metrics"></div>
 	<div class="music" id="music"></div>
+	<div class="music" id="keys">
+		<form id="keysForm">
+			<input type="password" id="kOpenAI" placeholder="${t('panel.key_openai')}" autocomplete="off" />
+			<input type="password" id="kDeepSeek" placeholder="${t('panel.key_deepseek')}" autocomplete="off" />
+			<button type="submit">${t('panel.key_save')}</button>
+			<span id="keyStatus" title="${t('panel.key_hint')}"></span>
+		</form>
+	</div>
 </header>
 <main id="list"></main>
 <script>
@@ -263,6 +271,34 @@ for (const [value, label] of kinds) {
 }
 document.getElementById('pause').onclick = (e) => { paused = !paused; e.target.textContent = paused ? ${JSON.stringify(t('panel.resume'))} : ${JSON.stringify(t('panel.pause'))}; };
 document.getElementById('clear').onclick = () => { list.replaceChildren(); };
+const keyForm = document.getElementById('keysForm');
+const keyStatus = document.getElementById('keyStatus');
+async function loadKeys() {
+	try {
+		const res = await fetch('/api/keys', { cache: 'no-store' });
+		const data = await res.json();
+		document.getElementById('kOpenAI').placeholder = data.openai ? ${JSON.stringify(t('panel.key_set'))} + ' ' + data.openai : ${JSON.stringify(t('panel.key_openai'))};
+		document.getElementById('kDeepSeek').placeholder = data.deepseek ? ${JSON.stringify(t('panel.key_set'))} + ' ' + data.deepseek : ${JSON.stringify(t('panel.key_deepseek'))};
+	} catch { /* the rest of the panel works without the key status */ }
+}
+keyForm.onsubmit = async (event) => {
+	event.preventDefault();
+	keyStatus.textContent = ${JSON.stringify(t('panel.key_saving'))};
+	const body = JSON.stringify({ openai: document.getElementById('kOpenAI').value.trim(), deepseek: document.getElementById('kDeepSeek').value.trim() });
+	try {
+		const res = await fetch('/api/keys', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+		const data = await res.json();
+		keyStatus.textContent = data.ok ? data.message : data.error;
+		if (data.ok) {
+			document.getElementById('kOpenAI').value = '';
+			document.getElementById('kDeepSeek').value = '';
+			loadKeys();
+		}
+	} catch {
+		keyStatus.textContent = ${JSON.stringify(t('panel.key_failed'))};
+	}
+};
+loadKeys();
 q.oninput = () => reset();
 from.onchange = () => reset();
 to.onchange = () => reset();
@@ -366,6 +402,8 @@ export function startPanel({
 	state = () => ({}),
 	metrics = () => ({}),
 	health = () => ({ ok: true }),
+	keys = () => ({}),
+	applyKeys = null,
 	log = () => {},
 	nameFor = () => null,
 }) {
@@ -395,6 +433,55 @@ export function startPanel({
 				payload.state = state();
 				response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
 				response.end(JSON.stringify(payload));
+				return;
+			}
+			if (url.pathname === '/api/keys') {
+				if (request.method === 'GET') {
+					response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+					response.end(JSON.stringify(keys()));
+					return;
+				}
+				if (request.method !== 'POST' || !applyKeys) {
+					response.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
+					response.end(t('panel.not_found'));
+					return;
+				}
+				// The panel answers on loopback, so a page from somewhere else must not be able to drive it:
+				// a JSON content type (only an explicit fetch sends one) plus a same-origin Origin when the
+				// browser sends one keeps a drive-by form post out.
+				const type = String(request.headers['content-type'] ?? '');
+				const origin = request.headers.origin;
+				const sameOrigin =
+					!origin || origin === `http://${host}:${actualPort}` || origin === `http://localhost:${actualPort}`;
+				if (!type.startsWith('application/json') || !sameOrigin) {
+					response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+					response.end(t('panel.local_only'));
+					return;
+				}
+				const body = await new Promise((resolve) => {
+					let size = 0;
+					let text = '';
+					request.on('data', (chunk) => {
+						size += chunk.length;
+						if (size > 4096) {
+							request.destroy();
+							resolve(null);
+							return;
+						}
+						text += chunk;
+					});
+					request.on('end', () => {
+						try {
+							resolve(JSON.parse(text || '{}'));
+						} catch {
+							resolve(null);
+						}
+					});
+					request.on('error', () => resolve(null));
+				});
+				const result = (await applyKeys(body ?? {})) ?? { ok: false, error: t('panel.error') };
+				response.writeHead(result.ok ? 200 : 400, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+				response.end(JSON.stringify(result));
 				return;
 			}
 			if (url.pathname === '/api/export') {
