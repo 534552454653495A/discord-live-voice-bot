@@ -617,7 +617,11 @@ export async function ownerGate(deps, keywords = null, tool = t('tools.helpers.g
 		// Compare by sequence when both sides carry one: transcript fragments can share a millisecond,
 		// and a wall-clock tie used to let the interjection slip through this check.
 		const after = last && (Number.isFinite(last.seq) && Number.isFinite(hit.seq) ? last.seq > hit.seq : last.at >= hit.at);
-		if (last && !last.owner && after) {
+		// Only a CLEAN interjection vetoes the owner: somebody who took the floor and said their own thing
+		// (`sure`). A leaning fragment is their voice bleeding into the owner's at the hand-off, and with
+		// owner priority on the owner's audio is the only audio sent anyway -- in a busy room that boundary
+		// bleed was cancelling the owner's own commands, which is exactly the owner being drowned out.
+		if (last && !last.owner && last.sure !== false && after) {
 			const who = last.id && typeof deps.nameFor === 'function' ? deps.nameFor(last.id) : t('tools.helpers.gate_someone_else');
 			return deny(
 				t('tools.helpers.gate_interrupted'),
@@ -648,7 +652,8 @@ export function ownerAllowed(deps, keywords = null) {
 		const hit = deps.commandSpeaker(keywords, opts);
 		if (!hit?.owner) return false;
 		const last = typeof deps.lastUtterance === 'function' ? deps.lastUtterance(opts) : null;
-		return !(last && !last.owner && last.at > hit.at);
+		// Same rule as ownerGate: only a clean (`sure`) interjection closes the gate; a boundary bleed does not.
+		return !(last && !last.owner && last.sure !== false && last.at > hit.at);
 	}
 	if (typeof deps.isOwnerActive !== 'function' || !deps.isOwnerActive()) return false;
 	if (!keywords?.length || typeof deps.ownerSaidRecently !== 'function') return true;

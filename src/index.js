@@ -486,6 +486,7 @@ client.on(Events.MessageCreate, (message) => {
 		// Which server this message may be answered in: the one it came from (it has a session), not the
 		// primary target, so a mention in the second server is not dropped.
 		guildId: session?.guild?.id ?? cfg.guildId,
+		noteTextChannel: (channelId) => session?.noteTextChannel?.(channelId),
 		log,
 		memory,
 		replyLimiter,

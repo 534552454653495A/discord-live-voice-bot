@@ -118,15 +118,20 @@ export function buildRuns(parts) {
 		}
 		const id = part.confidence === 'unsure' ? null : (part.id ?? null);
 		if (current && current.id === id) {
+			// Same speaker. A `leaning` fragment here is that speaker's own word during a moment another
+			// voice was also faintly audible -- almost every turn's last fragment is one, because the next
+			// person is already starting. It is NOT somebody else's text stuck into this run, so it does not
+			// make the run mixed on its own: whether the edge bleed matters is decided over the WHOLE line
+			// by resolveLine (aggregate solo), not by the worst single fragment. Marking mixed here made
+			// nearly every line in a busy room mixed and drowned the owner's own commands in the crowd.
 			current.parts.push(part);
-			if (!part.sure) current.mixed = true;
 		} else if (current && !canCut(lastText, part.text)) {
 			// The speaker changed in the middle of a word: the deltas stay glued together and the run stops
-			// claiming to be one person's.
+			// claiming to be one person's -- this really is two people's text in one run.
 			current.parts.push(part);
 			current.mixed = true;
 		} else {
-			runs.push({ id, parts: [...pending, part], mixed: !part.sure });
+			runs.push({ id, parts: [...pending, part], mixed: false });
 			pending = [];
 		}
 		lastText = part.text;

@@ -100,10 +100,26 @@ describe('one flush, one line per speaker', () => {
 		assert.deepEqual(runCandidates(runs[0]).sort(), ['a', 'b']);
 	});
 
-	it('marks a run that leans rather than knows', () => {
-		const runs = buildRuns([part('sanirim ', 'a', 0, 500, { sure: false, confidence: 'leaning', ids: ['a', 'b'] }), part('oyle', 'a', 500, 1000)]);
-		assert.equal(runs[0].id, 'a', 'the line still carries the likeliest name');
-		assert.equal(runs[0].mixed, true, 'and still may not be acted on');
+	// Live failure: in a busy room the last fragment of nearly every turn is "leaning", because the next
+	// person is already starting -- and that one edge fragment used to make the WHOLE run mixed, which
+	// hedged every line to the model and refused the owner's own commands. A same-speaker fragment that
+	// merely leans is still that speaker's text; whether the bleed matters is decided over the whole line
+	// (resolveLine, aggregate solo), not by the worst single fragment.
+	it('does not let one leaning edge fragment of the same speaker make the run mixed', () => {
+		const leaning = { sure: false, confidence: 'leaning', ids: ['a', 'b'] };
+		const trailing = buildRuns([part('bunu ', 'a', 0, 500), part('yap', 'a', 500, 1000, leaning)]);
+		assert.equal(trailing[0].id, 'a');
+		assert.equal(trailing[0].mixed, false, 'the last word leaning is not somebody else s word');
+		const leading = buildRuns([part('sanirim ', 'a', 0, 500, leaning), part('oyle', 'a', 500, 1000)]);
+		assert.equal(leading[0].id, 'a', 'the line still carries the likeliest name');
+		assert.equal(leading[0].mixed, false, 'and a leaning first fragment is no different');
+	});
+
+	it('still marks a run mixed when it really holds somebody else s fragment', () => {
+		// The structural cases are untouched: a different speaker glued in mid-word stays mixed.
+		const runs = buildRuns([part('ban Da', 'a', 0, 500), part('na', 'b', 500, 700, { sure: false, confidence: 'leaning', ids: ['a', 'b'] })]);
+		assert.equal(runs.length, 1);
+		assert.equal(runs[0].mixed, true);
 	});
 
 	it('cuts where the next fragment starts with punctuation, even without a space before it', () => {

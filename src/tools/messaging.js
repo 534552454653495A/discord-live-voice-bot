@@ -81,6 +81,22 @@ async function resolveMessageChannel(deps, { channel, dm }) {
 	return null;
 }
 
+/**
+ * Where a message goes when no channel is named and none is configured: the channel the conversation
+ * has been happening in, and failing that the voice channel's own text chat -- "tell everyone in voice"
+ * means the people who are actually there. Refusing outright left "send everyone a hello" with nowhere
+ * to go.
+ */
+function sendableFallback(deps) {
+	for (const pick of [deps.lastTextChannel, deps.currentVoiceChannel]) {
+		const candidate = typeof pick === 'function' ? pick() : null;
+		if (!candidate || typeof candidate.send !== 'function') continue;
+		if (typeof candidate.isTextBased === 'function' && !candidate.isTextBased()) continue;
+		return candidate;
+	}
+	return null;
+}
+
 export const tools = [
 	defineTool({
 		name: 'send_message',
@@ -89,7 +105,7 @@ export const tools = [
 			'emojis, and stickers for server stickers. "everyone" (@everyone) is only pinged when the owner asks for it.',
 		parameters: P.obj(
 			{
-				channel: P.str('Channel name (e.g. "chat"). Empty = the default channel.'),
+				channel: P.str('Channel name (e.g. "chat"). Empty = the default channel, else the channel the conversation is in, else the voice channel chat.'),
 				text: P.str('Message text. Write :name: for a server emoji.'),
 				mentions: P.list('Member or role names to tag. "everyone" = @everyone (owner only)'),
 				emojis: P.list('Server emojis to append to the message'),
@@ -98,7 +114,8 @@ export const tools = [
 			['text'],
 		),
 		async handler(args, deps) {
-			const channel = resolveTextChannel(deps, args.channel);
+			let channel = resolveTextChannel(deps, args.channel);
+			if (!channel && !args.channel) channel = sendableFallback(deps);
 			if (!channel) {
 				return {
 					ok: false,

@@ -220,6 +220,9 @@ export async function handleMessage(message, deps) {
 	}
 
 	const persona = deps.persona();
+	// The channel people are actually talking to the bot in: "send everyone a hello" with no channel named
+	// goes here when no default channel is configured.
+	if (!isDm && message.channel?.id) deps.noteTextChannel?.(message.channel.id);
 	const authorName = message.member?.displayName ?? message.author.displayName ?? message.author.username ?? t('messages.someone');
 	const where = isDm ? 'DM' : `#${message.channel?.name ?? t('messages.channel_fallback')}`;
 

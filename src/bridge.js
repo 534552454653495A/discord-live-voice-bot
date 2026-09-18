@@ -75,13 +75,8 @@ export class AudioBridge {
 		const live = this.getLive();
 		const sent = Boolean(live?.ready && live.sendAudio(pcm));
 		this.onFrame?.({ priority, active, present, sent });
-		if (this.debug && active.length > 0) {
-			const key = active.join(',');
-			if (key !== this.lastActive) this.log(t('voice.speaking', { ids: key }));
-			this.lastActive = key;
-		} else if (this.debug) {
-			this.lastActive = '';
-		}
+		// The "who is speaking" debug line is printed by the session (GuildSession.logSpeaking), which can
+		// turn an id into a name; the bridge cannot, and printing raw ids here was most of the debug log.
 
 		// --- bot voice (model or local TTS) ---
 		if (!this.primed && this.playback.length >= SAMPLES_PER_FRAME_24K * JITTER_FRAMES) this.primed = true;

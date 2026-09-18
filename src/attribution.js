@@ -597,7 +597,10 @@ export class SpeakerAttribution {
 			// -- blind to every language that is not written in Latin letters, which is a way to get a ban
 			// past the gate by talking over the owner in another alphabet. The text itself is the fallback.
 			if (utteranceWeight(utt) < minTokens) continue;
-			return { owner: utt.owner, id: utt.id, text: utt.text, at: utt.at, seq: utt.seq ?? 0, tokens: utt.tokens.length };
+			// `sure` travels with it so the gate can tell a clean interjection (somebody took the floor and
+			// said their own thing) from a leaning one (their voice merely bled into the owner's at the
+			// boundary). Only the first should be allowed to veto the owner's command.
+			return { owner: utt.owner, id: utt.id, sure: utt.sure !== false, text: utt.text, at: utt.at, seq: utt.seq ?? 0, tokens: utt.tokens.length };
 		}
 		return null;
 	}

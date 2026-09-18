@@ -313,6 +313,7 @@ export class GuildSession {
 		this.recentSpeakers = new Map();
 		// The private conversation the bot most recently wrote in, and the status line to return to.
 		this.lastDm = null;
+		this.lastTextChannelId = null;
 		this.presence = null;
 		// Told to be quiet by the owner. This is a state, not a request to the model: while it is on, the
 		// bot's audio is dropped before it reaches the channel, so nobody else can talk it into speaking.
@@ -345,6 +346,7 @@ export class GuildSession {
 			onFrame: (frame) => {
 				this.attribution.onFrame(frame);
 				this.trackSentSpeaker(frame);
+				if (this.cfg.debug) this.logSpeaking(frame.active);
 			},
 			onUserPcm: (userId, pcm) => {
 				if (this.brain === 'local') this.segmenter.push(userId, pcm);
@@ -415,6 +417,8 @@ export class GuildSession {
 				session.lastDm = entry;
 			},
 			lastDirectMessage: () => session.lastDm ?? null,
+			// The text channel the conversation was last happening in (see noteTextChannel).
+			lastTextChannel: () => (session.lastTextChannelId ? (session.guild?.channels.cache.get(session.lastTextChannelId) ?? null) : null),
 			// What the status line should say when no music is playing.
 			setDefaultPresence: (presence) => session.setDefaultPresence(presence),
 			defaultPresence: () => session.presence ?? null,
@@ -1811,6 +1815,25 @@ export class GuildSession {
 		if (!clash) return name;
 		const account = this.guild.members.cache.get(String(userId))?.user?.username;
 		return account ? t('runtime.name_with_account', { name, account }) : name;
+	}
+
+	/**
+	 * Debug line: who the audio says is speaking right now, by NAME. It used to live in the bridge, which
+	 * has no way to resolve an id, so it printed raw numeric ids many times a second. De-duplicated on the
+	 * set of ids so it only prints when the set changes.
+	 */
+	/** The text channel somebody last spoke to the bot in; send_message falls back to it. */
+	noteTextChannel(channelId) {
+		this.lastTextChannelId = channelId ? String(channelId) : null;
+	}
+
+	logSpeaking(active) {
+		const ids = Array.isArray(active) ? active.map((id) => String(id)) : [];
+		const key = ids.join(',');
+		if (key === this.lastSpeakingKey) return;
+		this.lastSpeakingKey = key;
+		if (!ids.length) return;
+		this.log(t('voice.speaking', { ids: ids.map((id) => this.speakerLabel(id)).join(', ') }));
 	}
 
 	/** Tells the model who is in the channel (when the session opens and on joins/leaves). */

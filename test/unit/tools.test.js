@@ -111,6 +111,26 @@ describe('owner gate: who said the command', () => {
 		for (let i = 0; i < n; i++) a.onFrame(frame);
 	};
 
+	// Live failure, the owner drowned out: in a busy room somebody's voice bleeds into the tail of the
+	// owner's command at the hand-off, the transcript notes that tangled fragment as somebody else's, and
+	// this check counted it as "somebody cut in" and refused the owner. A tangled (leaning) fragment is
+	// not somebody taking the floor; only a clean interjection is (the test below still refuses that).
+	it('does not let a voice bleeding into the owner s tail veto the owner s command', async () => {
+		const { deps, sent } = makeDeps();
+		const clock = { now: 50_000 };
+		const a = withAttribution(deps, clock);
+		frames(a, 50, { priority: true, active: ['o'] });
+		a.noteTranscript('move Jane to General', { startMs: 0, endMs: 1000 });
+		clock.now += 200;
+		frames(a, 10, { priority: false, active: ['o', 'z'] }); // Sam starts while the owner is still finishing
+		const tangled = a.noteTranscript('ok', { startMs: 1000, endMs: 1200 });
+		assert.equal(tangled.sure, false, 'the fragment is tangled, so it is not anybody s clean word');
+		a.markTurn();
+		const result = await callTool('move_member', { member: 'Jane', channel: 'General', come_along: false }, deps);
+		assert.equal(result.ok, true, result.spoken);
+		assert.deepEqual(sent.at(-1), { moved: 'General' });
+	});
+
 	it('someone cutting in while the backend works does not drop the command the owner gave', async () => {
 		const { deps, sent } = makeDeps();
 		const clock = { now: 50_000 };

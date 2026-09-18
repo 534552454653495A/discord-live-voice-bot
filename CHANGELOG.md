@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] — 2026-09-19
+
+### Fixed
+
+- **Nearly every line in a busy room was tagged as two voices, and the owner was drowned out by it.** Seen in
+  a five-person channel with DEBUG on: eight fragments in a row judged `adam, sure, alone 100%`, and the finished
+  line still came out `mixed`. The last fragment of almost every turn leans, because the next person is already
+  starting, and one leaning edge fragment made the whole run mixed — so the model was handed "somebody else's
+  words may have run into it" on line after line (and answered with "I missed who said that"), and the voice
+  command shortcut refused them. A same-speaker fragment that merely leans is still that speaker's text: it no
+  longer taints the run, and whether the bleed matters is decided over the WHOLE line by `resolveLine` (aggregate
+  solo), not by the worst single fragment. The structural cases are untouched: somebody else's fragment glued in
+  mid-word, folded in, or bridged over still makes the line mixed.
+- **A voice bleeding into the tail of the owner's command cancelled the command.** The owner gate refused a
+  command when anybody spoke after it and before the answer — and in a busy room that "anybody" was usually a
+  syllable tangled with the owner's own last word at the hand-off. Only a clean interjection (somebody taking the
+  floor with their own `sure` words) closes the gate now; a leaning fragment does not. With owner priority on the
+  owner's audio was the only audio sent anyway. `lastUtterance` carries `sure` so the gate can tell the two apart.
+- **"Send everyone a hello" had nowhere to go.** `send_message` with no channel named only knew the configured
+  default channel, and without one it answered "I did not know which channel". It now falls back to the channel
+  the conversation has been happening in, and failing that to the voice channel's own text chat — "everyone in
+  voice" means the people who are actually there.
+
+### Changed
+
+- **The persona meets crude jokes in character.** Friends in a voice channel swear, wind each other up and give
+  absurd "orders" as a joke, and the previous instruction only said the bot may answer in kind. The realtime
+  instructions, the local brain note and the written-reply rules now say the same thing in three sizes: treat
+  it as banter, stay in character, hit back short and sharp without starting it or turning genuinely cruel, and
+  brush off an explicit sexual request with a quip rather than a long refusal — never carrying it out, never
+  repeating or escalating what was said (the bot's own output is what a content filter reads).
+- **The debug "speaking" line prints names, and prints from the session.** It lived in the audio bridge, which
+  cannot resolve an id, so it printed raw numeric ids several times a second and was most of the debug log. It
+  is now `GuildSession.logSpeaking`, de-duplicated on the set of speakers, with names.
+
 ## [1.22.0] — 2026-09-16
 
 ### Added
