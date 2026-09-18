@@ -44,11 +44,11 @@ export default {
 	quiet: {
 		on: {
 			pattern:
-				'(?<![\\p{L}])(?:sus(?:unuz|un|s[ae]n[ae]|ar\\s+m[ıi]s[ıi]n)?|sessiz\\s+ol(?:un|unuz)?|sessizlik|kes\\s+ses[iı]n[iı]|ses[iı]n[iı]\\s+kes|kapa\\s+çenen[iı]|çenen[iı]\\s+kapa)(?![\\p{L}])',
+				'(?<![\\p{L}])(?:sus(?:unuz|un|s[ae]n[ae]|ar\\s+m[ıi]s[ıi]n)?|sessiz\\s+ol(?:un|unuz)?|sessizlik|kes\\s+ses[iı]n[iı]|ses[iı]n[iı]\\s+kes|kapa\\s+çenen[iı]|çenen[iı]\\s+kapa|(?:quiet(?:\\s+ayar[ıi]n[ıi])?|sessiz\\s+mod(?:u|a)?)\\s+(?:a[çc]\\p{L}*|ge[çc]\\p{L}*)|quiet\\s+on)(?![\\p{L}])',
 			flags: 'iu',
 		},
 		off: {
-			pattern: '(?<![\\p{L}])(?:konu[şs]ab[iı]l[iı]r(?:s[iı]n(?:[iı]z)?)?|devam\\s+edeb[iı]l[iı]rs[iı]n)(?![\\p{L}])',
+			pattern: '(?<![\\p{L}])(?:konu[şs](?:un|sana|ab[iı]l[iı]r\\p{L}*|maya\\s+devam(?:\\s+et\\p{L}*)?)?|devam\\s+edeb[iı]l[iı]r\\p{L}*|konu[şs]ma\\s+yasa[ğg][ıi]n[ıi]\\s+kald[ıi]r\\p{L}*|(?:sessizli[ğg]i|sessizlik\\s+ayar[ıi]n[ıi]|quiet(?:\\s+ayar[ıi]n[ıi])?|sessiz\\s+modu?)\\s+(?:kald[ıi]r\\p{L}*|kapat\\p{L}*|bitir\\p{L}*)|quiet\\s+off|ses[iı]n[iı]\\s+a[çc]\\p{L}*|sus(?:ma)?y[ıi]\\s+b[ıi]rak\\p{L}*)(?![\\p{L}])',
 			flags: 'iu',
 		},
 	},

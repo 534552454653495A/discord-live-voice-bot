@@ -30,6 +30,7 @@ import { Ducker, MusicPlayer } from './music.js';
 import { normalize, parseBool, stripDictationTail, stripSpokenPrefix } from './text.js';
 import { callTool, toolDefinitions, toolOutput } from './tools.js';
 import { VoiceSession } from './voice.js';
+import { toolDescription } from './tools/index.js';
 
 // Retry schedule (ms) for rejoining after the voice connection drops; the rest are skipped once one works.
 const RECOVERY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
@@ -482,6 +483,12 @@ export class GuildSession {
 			lastUtterance: (opts) => session.attribution.lastUtterance(opts),
 			transcriptLagging: (opts) => session.attribution.transcriptLagging(opts),
 			awaitTranscript: (maxMs) => session.awaitTranscript(maxMs),
+			// For the gate's second opinion: what the owner said last, what the tool does, and Jev to ask.
+			ownerUtterance: (opts) => session.attribution.ownerUtterance(opts),
+			toolDescription: (name) => toolDescription(name),
+			get jev() {
+				return session.jev;
+			},
 			activity: (event) => session.activity.push(event),
 			reminders: session.reminders,
 			savedTracks: session.savedTracks,

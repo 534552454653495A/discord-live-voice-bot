@@ -223,3 +223,39 @@ describe('parseVoiceCommand: quiet', () => {
 		}
 	});
 });
+
+describe('parseVoiceCommand: the ways the owner asks for the voice back (tr)', () => {
+	// Live failure: "melis konus", "konusmaya devam et", "konusma yasagini kaldir" and "quiet ayarini
+	// kapat" were said one after another to a bot the owner had told to be quiet, and none of them was
+	// a phrase the grammar knew -- so the deterministic route never fired and the bot stayed mute.
+	it('hears them all', () => {
+		for (const line of [
+			'melis konuş',
+			'konuş',
+			'konuşun',
+			'konuşmaya devam et',
+			'melis artık konuşmaya devam edebilirsin',
+			'melis artık konuşabilirs',
+			'konuşma yasağını kaldır',
+			'sessizliği kaldır',
+			'quiet ayarını kapat',
+			'quiet kapat',
+			'sessiz modu kapat',
+			'quiet off',
+			'sesini aç',
+			'susmayı bırak',
+		]) {
+			assert.deepEqual(turkish.parseVoiceCommand(line, [], trChannels), { type: 'quiet', value: 'off' }, line);
+		}
+	});
+	it('and the ways to switch it on by its name', () => {
+		for (const line of ['quiet ayarını aç', 'quiet aç', 'sessiz moda geç', 'sessiz modu aç', 'quiet on']) {
+			assert.deepEqual(turkish.parseVoiceCommand(line, [], trChannels), { type: 'quiet', value: 'on' }, line);
+		}
+	});
+	it('leaves alone what merely contains the word', () => {
+		for (const line of ['konuşma', 'konuşuyor musun', 'devam et', 'okuma odası sessiz']) {
+			assert.notEqual(turkish.parseVoiceCommand(line, [], trChannels)?.type, 'quiet', line);
+		}
+	});
+});

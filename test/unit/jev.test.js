@@ -56,3 +56,28 @@ describe('Jev: typed judgments about a line', () => {
 		assert.equal(await createJev(cfg(), { client }).judge({ line: 'x' }), null);
 	});
 });
+
+describe('Jev: does the owner s line ask for this tool', () => {
+	it('returns the probability, and null when it cannot answer', async () => {
+		const sent = [];
+		const client = {
+			systemOne: async (request) => {
+				sent.push(request);
+				return { answers: { asks: { type: 'noul', noul: 0.91 } } };
+			},
+		};
+		const jev = createJev(cfg(), { client });
+		assert.equal(await jev.asks({ line: 'melis konusmaya devam edebilirsin', tool: 'set_setting', description: 'turns a setting on or off' }), 0.91);
+		assert.equal(sent[0].state.tool, 'set_setting');
+		assert.equal(Object.keys(sent[0].questions).join(), 'asks');
+		assert.equal(await createJev(cfg({ jevApiKey: null })).asks({ line: 'x', tool: 't' }), null);
+		const broken = createJev(cfg(), {
+			client: {
+				systemOne: async () => {
+					throw new Error('down');
+				},
+			},
+		});
+		assert.equal(await broken.asks({ line: 'x', tool: 't' }), null);
+	});
+});

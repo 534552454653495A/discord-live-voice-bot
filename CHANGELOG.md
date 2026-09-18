@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] — 2026-09-19
+
+### Fixed
+
+- **The owner could switch the bot to quiet and never get it back.** Heard live, four times in a row: "Melis
+  konuş", "konuşmaya devam et", "konuşma yasağını kaldır", "quiet ayarını kapat" — the bot answered "tamam,
+  kapattım" and stayed mute. Three things were wrong at once. The transcript delivers a word in pieces
+  ("edebilirs" then "in"), and each piece became a word of its own, so `edebilirsin` never existed for the
+  gate's keyword list: it walked past the owner's command to a guest's "sus" from eight seconds earlier and
+  refused with "the owner did not say it" while the audio said, on every piece, that only the owner was
+  talking. A piece that starts with a letter, follows a piece that ended with one, begins exactly where it
+  ended in the audio and belongs to the same speaker is now the rest of that word. The deterministic
+  `sus`/`konuş` route knew only "konuşabilirsin" and "devam edebilirsin" as the way back; it now hears
+  "konuş", "konuşmaya devam et", a cut-off "konuşabilirs", "konuşma yasağını kaldır", "sessizliği kaldır",
+  "quiet ayarını kapat/aç", "sesini aç" and "susmayı bırak" ("devam et" on its own is left to the music).
+  And the model was told, in so many words, that "okay, done" without calling `set_setting` is the same as
+  not doing it.
+
+### Added
+
+- **The owner gate asks Jev when its keywords miss.** A keyword list cannot know every phrasing, and Turkish
+  inflects a verb out of a prefix match. When the list finds nothing of the owner's — or finds the word in
+  somebody else's mouth — the gate now takes what the owner actually said last (their own attributed speech,
+  pieces joined, a boundary bleed skipped, a clean interjection closing it) and asks Jev whether those words
+  ask for this tool, described as the model sees it. A clear yes (80%) opens the gate and the log says so
+  (`[kapı] … Jev …`). Who spoke is still the audio's call; Jev only reads the owner's own words, and with no
+  Jev the gate behaves exactly as before.
+
 ## [1.24.1] — 2026-09-19
 
 ### Fixed

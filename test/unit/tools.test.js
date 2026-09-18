@@ -709,3 +709,71 @@ describe('music / memory / summary tools', () => {
 		assert.equal(result.spoken, 'summary 2');
 	});
 });
+
+describe('owner gate: Jev reads the owner s own words when the keywords miss', async () => {
+	const { ownerGate } = await import('../../src/tools/helpers.js');
+	const frames = (a, n, frame) => {
+		for (let i = 0; i < n; i++) a.onFrame(frame);
+	};
+	const setup = (jev) => {
+		const { deps } = makeDeps();
+		const clock = { now: 50_000 };
+		const a = new SpeakerAttribution({ ownerId: 'o', now: () => clock.now });
+		deps.commandSpeaker = (words, opts) => a.commandSpeaker(words, opts);
+		deps.lastUtterance = (opts) => a.lastUtterance(opts);
+		deps.transcriptLagging = (opts) => a.transcriptLagging(opts);
+		deps.awaitTranscript = async () => {};
+		deps.nameFor = (id) => id;
+		deps.ownerUtterance = (opts) => a.ownerUtterance(opts);
+		deps.toolDescription = () => 'Turns a bot setting on or off, such as quiet.';
+		deps.jev = jev;
+		return { deps, a, clock };
+	};
+	const ownerSays = (a, text) => {
+		frames(a, 50, { priority: true, active: ['o'] });
+		a.noteTranscript(text, { startMs: 0, endMs: 1000 });
+	};
+
+	// Live failure: the owner said "melis artik konusmaya devam edebilirsin", the keyword list knew
+	// none of those words in that shape, and the gate refused with a guest's "sus" from eight seconds
+	// earlier. The audio said the owner alone; Jev says the words ask for the tool; that is enough.
+	it('lets the owner through when Jev is sure they asked, in words the list did not have', async () => {
+		const asked = [];
+		const { deps, a } = setup({ enabled: true, asks: async (input) => (asked.push(input), 0.93) });
+		ownerSays(a, 'melis artik konusmaya devam edebilirsin');
+		a.markTurn();
+		assert.equal(await ownerGate(deps, ['zzz'], 'set_setting'), null, 'allowed');
+		assert.equal(asked[0].line, 'melis artik konusmaya devam edebilirsin');
+		assert.equal(asked[0].tool, 'set_setting');
+		assert.match(asked[0].description, /quiet/);
+	});
+
+	it('still refuses when Jev is not sure, and when there is no Jev', async () => {
+		const unsure = setup({ enabled: true, asks: async () => 0.4 });
+		ownerSays(unsure.a, 'melis artik konusmaya devam edebilirsin');
+		unsure.a.markTurn();
+		assert.equal((await ownerGate(unsure.deps, ['zzz'], 'set_setting'))?.denied, true);
+		const none = setup(null);
+		ownerSays(none.a, 'melis artik konusmaya devam edebilirsin');
+		none.a.markTurn();
+		assert.equal((await ownerGate(none.deps, ['zzz'], 'set_setting'))?.denied, true);
+	});
+
+	it('never opens on somebody else s words, however sure Jev is', async () => {
+		const { deps, a } = setup({ enabled: true, asks: async () => 0.99 });
+		frames(a, 50, { priority: false, active: ['z'] });
+		a.noteTranscript('melis artik konusmaya devam edebilirsin', { startMs: 0, endMs: 1000 });
+		a.markTurn();
+		assert.equal((await ownerGate(deps, ['zzz'], 'set_setting'))?.denied, true);
+	});
+
+	it('does not open when somebody cut in cleanly after the owner', async () => {
+		const { deps, a, clock } = setup({ enabled: true, asks: async () => 0.99 });
+		ownerSays(a, 'melis artik konusmaya devam edebilirsin');
+		clock.now += 500;
+		frames(a, 20, { priority: false, active: ['z'] });
+		a.noteTranscript('hayir yapma', { startMs: 1000, endMs: 1400 });
+		a.markTurn();
+		assert.equal((await ownerGate(deps, ['zzz'], 'set_setting'))?.denied, true);
+	});
+});

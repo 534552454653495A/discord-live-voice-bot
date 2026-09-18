@@ -22,6 +22,13 @@ const NAME_LEAN = 0.25;
 // stretch may belong to either of them. At solo >= 0.8 everybody else is bounded at 0.2 by
 // construction, so this one constant does the whole job.
 const GATE_SOLO = 0.8;
+// The rest of a word: a transcript piece that starts with a letter, follows a piece that ended with
+// one, begins in the audio exactly where that piece ended, and arrives within this of it on the
+// clock. The clock bound is what keeps two things said back to back, whose positions touch, apart.
+const GLUE_MS = 1500;
+// A pause inside one request from the owner ("melis... artik konusabilirsin"). Longer than that is
+// two things said, and only the last one is the request.
+const OWNER_SPEECH_GAP_MS = 2500;
 const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: null, share: 0, speakers: 0 });
 // How far outside a stretch to look when the stretch itself holds no audio at all. A fragment can land
 // in the pause between two of somebody's own words: Discord sends no packets while they draw breath, so
@@ -134,6 +141,7 @@ export class SpeakerAttribution {
 		this.otherTextAt = 0;
 		// Word level window, for EVERYONE: { word, at, owner, id, pos } (pos = audio position, null if none)
 		this.words = [];
+		this.lastPiece = null; // the previous transcript piece, to tell the rest of a word from a new one
 		// Monotonic counter stamped on every noted fragment: two fragments can share a millisecond, so
 		// ordering by `at` alone would let an interjection tie with the owner's command and slip past the gate.
 		this.noteSeq = 0;
@@ -406,7 +414,8 @@ export class SpeakerAttribution {
 	 * (fallback path). When `owner`/`id` is given (local STT: one fragment per user) it is used directly.
 	 */
 	noteTranscript(text, { startMs = null, endMs = null, owner: ownerOverride = null, id: idOverride = null } = {}) {
-		const fragment = String(text ?? '').trim();
+		const raw = String(text ?? '');
+		const fragment = raw.trim();
 		if (!fragment) return null;
 		const at = this.now();
 		const pos = Number.isFinite(startMs) ? startMs : null;
@@ -446,17 +455,34 @@ export class SpeakerAttribution {
 		// tell "somebody talked over you" from "you did not say it".
 		const ownerIn = typeof ownerOverride === 'boolean' ? ownerOverride : this.ownerId !== null && hit.ids.includes(this.ownerId);
 		const tokens = normalize(fragment).split(' ').filter(Boolean);
+		// A delta is shorter than a word, so a word can arrive in two pieces: "edebilirs" then "in". Each
+		// piece used to become a word of its own, a keyword split that way was never matched, and the
+		// gate then walked past the owner's real command to an older word of somebody else's. A piece that
+		// starts with a letter, follows a piece that ended with one, sits exactly where that piece ended in
+		// the audio and belongs to the same speaker is the REST of that word. Local STT hands over whole
+		// utterances, so nothing is glued on that path.
+		const glue = !forced && this._continuesLastWord(raw, { owner, id, pos });
+		const joiner = glue ? '' : ' ';
 		if (owner) {
-			this.ownerText = `${this.ownerText} ${fragment}`.slice(-this.maxText);
+			this.ownerText = `${this.ownerText}${joiner}${fragment}`.slice(-this.maxText);
 			this.ownerTextAt = at;
 		} else {
-			this.otherText = `${this.otherText} ${fragment}`.slice(-this.maxText);
+			this.otherText = `${this.otherText}${joiner}${fragment}`.slice(-this.maxText);
 			this.otherTextAt = at;
 		}
 		const seq = ++this.noteSeq;
-		for (const word of tokens) this.words.push({ word, at, owner, id, sure, ownerIn, pos, seq });
+		let rest = tokens;
+		if (glue && tokens.length && this.words.length) {
+			const last = this.words[this.words.length - 1];
+			last.word += tokens[0];
+			last.at = at;
+			if (!sure) last.sure = false; // a word is only sure when every piece of it was
+			rest = tokens.slice(1);
+		}
+		for (const word of rest) this.words.push({ word, at, owner, id, sure, ownerIn, pos, seq });
 		this._pruneWords(at);
-		this._noteUtterance({ owner, id, sure, at, seq, startMs: pos, endMs: end, text: fragment, tokens });
+		this._noteUtterance({ owner, id, sure, at, seq, startMs: pos, endMs: end, text: fragment, tokens, glue: glue && tokens.length ? tokens[0] : null });
+		this.lastPiece = forced ? null : { raw, owner, id: id ?? null, endMs: end, at };
 		// Handed back so that the caller builds its line out of the SAME answer. Resolving the track
 		// again downstream is how two parts of the code ended up disagreeing about who was talking.
 		return {
@@ -473,7 +499,7 @@ export class SpeakerAttribution {
 		};
 	}
 
-	_noteUtterance({ owner, id, sure = true, at, seq, startMs, endMs, text, tokens }) {
+	_noteUtterance({ owner, id, sure = true, at, seq, startMs, endMs, text, tokens, glue = null }) {
 		const last = this.utterances[this.utterances.length - 1];
 		// `sure` is part of the identity: a fragment that only leans towards somebody must not merge into
 		// a certain utterance and launder itself into a fact.
@@ -486,17 +512,34 @@ export class SpeakerAttribution {
 			last.at = at;
 			last.seq = seq;
 			if (endMs !== null) last.endMs = endMs;
-			last.text = `${last.text} ${text}`.slice(-this.maxText);
-			last.tokens.push(...tokens);
+			last.text = `${last.text}${glue !== null ? '' : ' '}${text}`.slice(-this.maxText);
+			if (glue !== null && last.tokens.length) {
+				last.tokens[last.tokens.length - 1] += glue;
+				last.tokens.push(...tokens.slice(1));
+			} else {
+				last.tokens.push(...tokens);
+			}
 			if (last.tokens.length > 80) last.tokens.splice(0, last.tokens.length - 80);
 			return;
 		}
-		this.utterances.push({ owner, id: id ?? null, sure, at, seq, startMs, endMs, text, tokens: [...tokens] });
+		this.utterances.push({ owner, id: id ?? null, sure, at, seq, startMs, endMs, text, tokens: [...tokens], glued: glue !== null });
 		const cutoff = at - Math.max(this.transcriptWindowMs * 2, this.continuityMs);
 		let drop = 0;
 		while (drop < this.utterances.length - 1 && this.utterances[drop].at < cutoff) drop++;
 		if (drop > 0) this.utterances.splice(0, drop);
 		if (this.utterances.length > MAX_UTTERANCES) this.utterances.splice(0, this.utterances.length - MAX_UTTERANCES);
+	}
+
+	/** Is this piece the rest of the word the previous piece ended in? (See noteTranscript.) */
+	_continuesLastWord(raw, { owner, id, pos }) {
+		const prev = this.lastPiece;
+		if (!prev) return false;
+		if (!/^[\p{L}\p{N}]/u.test(raw) || !/[\p{L}\p{N}]$/u.test(prev.raw)) return false;
+		if (prev.owner !== owner || prev.id !== (id ?? null)) return false;
+		// Pieces of one word arrive together. A piece arriving much later is a new thing said, whatever the
+		// positions say: they touch when somebody goes straight on without a pause.
+		if (this.now() - prev.at > GLUE_MS) return false;
+		return pos !== null && prev.endMs !== null ? Math.abs(pos - prev.endMs) <= 1 : true;
 	}
 
 	_pruneWords(now = this.now()) {
@@ -603,6 +646,50 @@ export class SpeakerAttribution {
 			return { owner: utt.owner, id: utt.id, sure: utt.sure !== false, text: utt.text, at: utt.at, seq: utt.seq ?? 0, tokens: utt.tokens.length };
 		}
 		return null;
+	}
+
+	/**
+	 * What the owner said last, before the turn: their most recent stretch of speech, in their own
+	 * words. Consecutive owner utterances are joined; somebody else's voice merely bleeding in at a
+	 * boundary (a leaning fragment) is skipped; a CLEAN utterance of somebody else's ends the search, and
+	 * when it came after the owner's words the answer is null -- somebody cut in. This is what the gate
+	 * hands to Jev when the keywords did not match: the phrasing the keyword list did not think of, in a
+	 * language that inflects a verb out of a prefix match.
+	 * @returns {{ text: string, at: number, seq: number, sure: true }|null}
+	 */
+	ownerUtterance({ windowMs = this.transcriptWindowMs, turn = undefined } = {}) {
+		const now = this.now();
+		const cut = this._resolveTurn(turn, now);
+		const parts = [];
+		let seq = 0;
+		let latestAt = 0;
+		let prevAt = 0;
+		let sure = false;
+		for (let i = this.utterances.length - 1; i >= 0; i--) {
+			const utt = this.utterances[i];
+			if (now - utt.at > windowMs) break;
+			if (!this._beforeTurn(utt, cut)) continue;
+			const owners = utt.owner || (this.ownerId !== null && utt.id === this.ownerId);
+			if (!owners) {
+				if (utt.sure === false) continue; // a voice bleeding into the owner's at the boundary
+				if (!parts.length) return null; // somebody else spoke last, cleanly
+				break;
+			}
+			if (parts.length && prevAt - utt.at > OWNER_SPEECH_GAP_MS) break;
+			if (!parts.length) {
+				seq = utt.seq ?? 0;
+				latestAt = utt.at;
+			}
+			prevAt = utt.at;
+			if (utt.owner) sure = true;
+			parts.unshift({ text: utt.text, glued: utt.glued === true });
+		}
+		// Gate-grade requires at least one stretch that was the owner ALONE; a run of leaning fragments
+		// that merely carry the owner's id is not evidence about a command.
+		if (!parts.length || !sure) return null;
+		let text = '';
+		for (let i = 0; i < parts.length; i++) text += (i && !parts[i].glued ? ' ' : '') + parts[i].text;
+		return { text: text.trim().slice(-300), at: latestAt, seq, sure: true };
 	}
 
 	/**

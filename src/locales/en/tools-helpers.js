@@ -62,6 +62,8 @@ export default {
 	gate_reason_interrupted: '{who} spoke after the owner: "{text}"',
 	gate_someone_else: 'someone else',
 	gate_detail_owner_said: 'the owner said the command ("{word}")',
+	gate_detail_jev: 'the owner asked in other words (Jev {percent}%)',
+	log_gate_jev: '[gate] {tool}: Jev — does the owner\'s "{text}" ask for this tool: {percent}%',
 	gate_owner_not_active: 'Only the bot owner can ask for this, and I cannot hear them right now.',
 	gate_reason_last_not_owner: 'the last speaker was not the owner',
 	gate_detail_last_owner: 'the owner spoke last, no keyword check',

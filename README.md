@@ -205,6 +205,8 @@ decides what to do with them: when a line was banter (an absurd "order" between 
 the bot at all, the realtime model is told so in a second short context line. The line itself has already
 gone to the model under its speaker's name, so a slow or unavailable Jev costs nothing. `DEBUG=1` prints
 the verdict per line (`[jev] …`).
+The owner gate asks Jev too: when its keyword list does not recognise how the owner phrased a request, Jev is
+asked whether the owner's own words ask for that tool, and a clear yes opens the gate (who spoke stays the audio's call).
 
 ## Admin panel
 

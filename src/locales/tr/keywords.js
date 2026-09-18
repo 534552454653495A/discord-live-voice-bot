@@ -58,7 +58,7 @@ export default {
 		timeout: ['timeout', 'sustur', 'mute'],
 		role: ['rol', 'yetki'],
 		voice: ['ses', 'sesini', 'voice', 'mikrofon', 'mute'],
-		setting: ['ayar', 'setting', 'mod', 'modu', 'modunu', '=sus', 'sessiz', 'sessizlik', '=kes', '=kapa', '=konusabilir', '=edebilir'],
+		setting: ['ayar', 'setting', 'mod', 'modu', 'modunu', '=sus', 'sessiz', 'sessizlik', '=kes', '=kapa', '=konusabilir', '=edebilir', '=konus', 'devam', 'quiet', 'yasak', '=ac', 'birak', 'kaldir'],
 		delete: ['sil', 'temizle', 'kaldir'],
 		channel: ['kanal', 'oda', 'kategori', 'kilit', 'kilitle'],
 		name: ['nick', 'nickname', 'isim', 'ismi', 'takma', 'adi', 'adin', 'kullanici'],

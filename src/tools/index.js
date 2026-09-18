@@ -71,6 +71,11 @@ export function hasTool(name) {
 	return REGISTRY.has(name);
 }
 
+/** What a tool does, as the model is told it; the gate hands this to Jev. */
+export function toolDescription(name) {
+	return REGISTRY.get(name)?.definition?.description ?? null;
+}
+
 /**
  * Runs the tool.
  * @returns {Promise<{ ok: boolean, spoken: string, data?: object, warnings?: string[], needs_confirmation?: boolean }>}

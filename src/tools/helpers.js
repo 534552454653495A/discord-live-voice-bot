@@ -558,6 +558,33 @@ export function permissionLabels(flags) {
  * The transcript can arrive late: if the word is not found, we wait a short while (`awaitTranscript`).
  * @returns {Promise<null | { ok: false, spoken: string, denied: true }>} null = allowed
  */
+// How sure Jev has to be that the owner's words ask for the tool before the gate opens on them alone.
+// The keyword path is a string match; this one is a judgment, so it needs a clear majority, and it is
+// only ever consulted when the keywords found nothing of the owner's.
+const JEV_GATE_P = 0.8;
+
+/**
+ * The keywords did not find the owner's word (or found somebody else's). Before refusing, read what the
+ * owner actually said last and ask Jev whether it asks for this tool. Who spoke is still the audio's
+ * call: the words come from the owner's own attributed speech, and a clean interjection after them
+ * closes this path the same way it closes the keyword path.
+ * @returns {Promise<{ percent: number, text: string }|null>} the reason to allow, or null
+ */
+async function ownerAskedByJev(deps, tool, opts) {
+	const jev = deps.jev;
+	if (!jev?.enabled || typeof jev.asks !== 'function' || typeof deps.ownerUtterance !== 'function') return null;
+	const said = deps.ownerUtterance(opts);
+	if (!said?.text) return null;
+	const last = typeof deps.lastUtterance === 'function' ? deps.lastUtterance(opts) : null;
+	if (last && !last.owner && last.sure !== false && last.seq > said.seq) return null;
+	const description = typeof deps.toolDescription === 'function' ? (deps.toolDescription(tool) ?? '') : '';
+	const p = await jev.asks({ line: said.text, tool, description });
+	if (typeof p !== 'number') return null;
+	const percent = Math.round(p * 100);
+	deps.log?.(t('tools.helpers.log_gate_jev', { tool, percent, text: said.text.slice(0, 60) }));
+	return p >= JEV_GATE_P ? { percent, text: said.text } : null;
+}
+
 export async function ownerGate(deps, keywords = null, tool = t('tools.helpers.gate_default_tool')) {
 	const deny = (spoken, reason) => {
 		deps.log?.(t('tools.helpers.log_gate_denied', { tool, reason }));
@@ -598,6 +625,13 @@ export async function ownerGate(deps, keywords = null, tool = t('tools.helpers.g
 			// Still waiting on the transcript of the utterance that triggered this turn: whatever we can
 			// see is from an EARLIER turn, so approving it would let a stale command authorise this one.
 			if (lagging()) return deny(t('tools.helpers.gate_transcript_missing'), t('tools.helpers.gate_reason_transcript_missing'));
+		}
+		// The keywords missed the owner's phrasing, or found the word in somebody else's mouth while the
+		// owner asked in other words (heard live: "sus" from a guest eight seconds earlier, then the
+		// owner's "konusmaya devam edebilirsin"). Jev reads the owner's own words before this refuses.
+		if (!hit || (!hit.owner && !hit.ownerOverlap)) {
+			const asked = await ownerAskedByJev(deps, tool, opts);
+			if (asked) return allow(t('tools.helpers.gate_detail_jev', { percent: asked.percent }), { jev: asked.percent, text: asked.text });
 		}
 		if (!hit) {
 			return deny(t('tools.helpers.gate_not_heard'), t('tools.helpers.gate_reason_not_said'));

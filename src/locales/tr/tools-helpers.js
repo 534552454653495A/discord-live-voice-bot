@@ -62,6 +62,8 @@ export default {
 	gate_reason_interrupted: 'sahipten sonra {who} konuştu: "{text}"',
 	gate_someone_else: 'başkası',
 	gate_detail_owner_said: 'komutu sahip söyledi ("{word}")',
+	gate_detail_jev: 'sahip başka kelimelerle istedi (Jev %{percent})',
+	log_gate_jev: '[kapı] {tool}: Jev — sahibin sözü "{text}" bu aracı istiyor mu: %{percent}',
 	gate_owner_not_active: 'Bunu yalnızca bot sahibi söyleyebilir; şu an onu duymuyorum.',
 	gate_reason_last_not_owner: 'son konuşan sahip değil',
 	gate_detail_last_owner: 'son konuşan sahip, kelime kontrolü yok',
