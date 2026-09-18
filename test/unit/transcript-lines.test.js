@@ -484,3 +484,62 @@ describe('who the model is told said a line', () => {
 		assert.deepEqual(room.spoken(), [{ who: 'owner', text: 'beni asagi tasi' }]);
 	});
 });
+
+describe('Jev: what the model is told a line was', () => {
+	const fakeJev = (verdict) => ({ enabled: true, model: 'fake', judge: async (input) => verdict(input) });
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+	// Friends give the bot absurd "orders" as a joke. The keyword grammar cannot tell "play X" from "meow
+	// for me"; Jev can, and the model is told so in a SECOND line -- after the first one, never instead of
+	// it, so a slow or dead Jev costs nothing.
+	it('adds "that was banter" after the line, and nothing after a real request', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		const asked = [];
+		room.session.jev = fakeJev((input) => {
+			asked.push(input.line);
+			return input.line.includes('miyavla')
+				? { addressed: 0.9, kind: 'banter', kindP: 0.9, confidence: 0.9 }
+				: { addressed: 0.95, kind: 'command', kindP: 0.9, confidence: 0.9 };
+		});
+		room.voices('guest', 40);
+		room.delta('melis bana miyavla', 0, 800);
+		t.mock.timers.tick(1300);
+		await settle();
+		assert.deepEqual(asked, ['melis bana miyavla']);
+		const said = room.lines();
+		assert.equal(said.length, 2, said.join(' | '));
+		assert.match(said[0], /miyavla/, 'the line goes to the model first, under its name');
+		assert.match(said[1], /şaka|banter/, 'and the verdict follows it');
+
+		room.voices('guest', 40);
+		room.delta('melis bir sarki ac', 800, 1600);
+		t.mock.timers.tick(1300);
+		await settle();
+		assert.equal(room.lines().length, 3, 'a real request gets no second line');
+	});
+
+	it('says "not said to you" when people are talking among themselves', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		room.session.jev = fakeJev(() => ({ addressed: 0.1, kind: 'chat', kindP: 0.8, confidence: 0.8 }));
+		room.voices('guest', 40);
+		room.delta('ya dun macta ne oldu', 0, 800);
+		t.mock.timers.tick(1300);
+		await settle();
+		const said = room.lines();
+		assert.equal(said.length, 2, said.join(' | '));
+		assert.match(said[1], /söylenmedi|not said to you/);
+	});
+
+	it('asks nothing when Jev is off', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		assert.equal(room.session.jev.enabled, false);
+		room.voices('guest', 40);
+		room.delta('merhaba', 0, 800);
+		t.mock.timers.tick(1300);
+		await settle();
+		assert.equal(room.lines().length, 1);
+	});
+});

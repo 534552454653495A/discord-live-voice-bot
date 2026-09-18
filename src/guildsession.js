@@ -15,6 +15,7 @@ import { ChannelType } from 'discord.js';
 import { createTaskRunner, executeAction } from './agent.js';
 import { FRAME_MS, PlaybackQueue, SpeakerMixer, peakOf } from './audio.js';
 import { buildRuns, canEndAfter, runCandidates, runEnd, runSpan, runText } from './runs.js';
+import { createJev } from './jev.js';
 import { SpeakerAttribution } from './attribution.js';
 import { parseVoiceCommand } from './commands.js';
 import { t, tList, tRaw } from './i18n/index.js';
@@ -95,6 +96,13 @@ const HARMLESS_VOICE_ACTIONS = new Set(['music', 'read', 'status', 'help', 'pane
 // How many times a session will spell out a line that had no audio under it. Enough to see the pattern,
 // few enough not to become the log.
 const NO_AUDIO_SAMPLE = 6;
+// Jev thresholds. Banter needs a clear majority before the model is told to take it as a joke: a wrong
+// "that was a joke" on a real request is worse than a missed one. "Not said to you" is the stronger
+// claim, so it needs the probability of being addressed to be low, not merely below half. Lines shorter
+// than a word are not worth a round trip.
+const JEV_BANTER_P = 0.7;
+const JEV_NOT_ADDRESSED_P = 0.25;
+const JEV_MIN_CHARS = 4;
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -323,6 +331,10 @@ export class GuildSession {
 		this.liveErrorCount = 0;
 		this.liveErrorSince = 0;
 
+		// Jev: typed judgments about each finished line (said to the bot? banter or a real request?). Off
+		// without a key, and a failure never reaches the line, which was handed to the model regardless.
+		this.jev = createJev(this.cfg, { log: (line) => this.log(line) });
+		if (this.jev.enabled) this.log(t('runtime.jev_ready', { model: this.jev.model }));
 		this.taskDeps = this.buildDeps();
 		this.runTask = createTaskRunner(this.taskDeps);
 		this.voice = this.buildVoice();
@@ -1485,6 +1497,7 @@ export class GuildSession {
 				meta: item.id && !item.mixed ? undefined : { unclear: true, speakers: item.candidates },
 			});
 			if (cfg.announceSpeaker && this.live?.ready) this.announceLine(item);
+			this.judgeLine(item);
 		}
 		// Once per flush, not once per line: aborting an in-flight local render twice throws the whole
 		// generation away, which is the reason the barge-in guard exists at all.
@@ -1834,6 +1847,47 @@ export class GuildSession {
 		this.lastSpeakingKey = key;
 		if (!ids.length) return;
 		this.log(t('voice.speaking', { ids: ids.map((id) => this.speakerLabel(id)).join(', ') }));
+	}
+
+	/**
+	 * Ask Jev what a finished line IS, and tell the model only when the answer changes how it should
+	 * treat the line. Non-blocking: the line has already gone to the model under its speaker's name; a
+	 * second short context line follows when Jev says it was banter, or was not said to the bot at all.
+	 * A slow or dead Jev therefore costs nothing but the verdict.
+	 */
+	judgeLine(item) {
+		if (!this.jev?.enabled || !item.id || item.line.length < JEV_MIN_CHARS) return;
+		const who = this.speakerLabel(item.id);
+		void this.jev
+			.judge({
+				line: item.line,
+				speaker: who,
+				botName: this.persona().name ?? 'bot',
+				ownerSpeaking: this.isOwnerId(item.id),
+				recent: this.recentUserText,
+			})
+			.then((hit) => {
+				if (!hit) return;
+				if (this.cfg.debug) {
+					this.log(
+						t('runtime.log_jev', {
+							who,
+							kind: hit.kind,
+							kindP: Math.round(hit.kindP * 100),
+							addressed: Math.round(hit.addressed * 100),
+							line: item.line.slice(0, 40),
+						}),
+					);
+				}
+				if (!this.live?.ready) return;
+				const clipped = safeContext(item.line).slice(0, 120);
+				if (hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P) {
+					this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
+				} else if (hit.addressed <= JEV_NOT_ADDRESSED_P && hit.kind !== 'command' && hit.kind !== 'question') {
+					this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
+				}
+			})
+			.catch(() => {});
 	}
 
 	/** Tells the model who is in the channel (when the session opens and on joins/leaves). */

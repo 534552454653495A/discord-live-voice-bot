@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] — 2026-09-19
+
+### Added
+
+- **Jev judges what a line was.** With `JEV_API_KEY` set, every finished line goes to
+  [Jev](https://typesafe.ai) (TypeSafe's System One model) with two typed questions asked in one round
+  trip: *was this said to the bot?* and *is it a request, a question, banter, or people talking among
+  themselves?* The answers are probabilities and the code decides: when a line was banter above a clear
+  majority, or was almost certainly not for the bot, the realtime model is told so in a second short
+  context line. The line itself has already gone to the model under its speaker's name, so a slow or
+  dead Jev costs nothing but the verdict; after five failures in a row the session stops asking. This is
+  the piece the roast instructions could not give the model on their own: friends give the bot absurd
+  "orders" as a joke, and a keyword grammar cannot tell "play X" from "meow for me". `DEBUG=1` prints the
+  verdict per line (`[jev] …`); the key is never printed. Off without a key; `JEV=0` turns it off with one.
+
 ## [1.23.0] — 2026-09-19
 
 ### Fixed

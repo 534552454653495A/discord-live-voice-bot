@@ -82,6 +82,7 @@ match) additionally require a spoken confirmation.
 - A **Discord application** with a bot token
 - An **OpenAI API key** with access to the realtime model
 - Optional: a **DeepSeek** key (written replies), **Python 3** + a CUDA GPU (local brain)
+- Optional: a **Jev** key ([typesafe.ai](https://typesafe.ai)) for typed judgments about each line: joke or request, said to the bot or not
 
 ffmpeg ships with the project (`ffmpeg-static`); yt-dlp is downloaded into `tools/bin/` on first use.
 
@@ -195,6 +196,16 @@ tools\run-chatterbox.cmd
 
 Voice commands, tools and the owner gate all work in this mode. Web search does not.
 
+## Jev judgments
+
+With `JEV_API_KEY` set, every finished line is sent to [Jev](https://typesafe.ai) (TypeSafe's System One
+model) with two typed questions: *was this said to the bot?* and *is it a request, a question, banter, or
+people talking among themselves?* The answers come back as probabilities and the code, not the model,
+decides what to do with them: when a line was banter (an absurd "order" between friends) or was not for
+the bot at all, the realtime model is told so in a second short context line. The line itself has already
+gone to the model under its speaker's name, so a slow or unavailable Jev costs nothing. `DEBUG=1` prints
+the verdict per line (`[jev] …`).
+
 ## Admin panel
 
 `http://127.0.0.1:8787` — bound to loopback only, with a Host-header check against DNS rebinding.
@@ -224,6 +235,7 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | `MUSIC_VOLUME` / `MUSIC_DUCK_VOLUME` | `35` / `12` | Music level, and level while the bot speaks |
 | `BRAIN_MODE` | `auto` | `auto` falls back to the local brain, `local` always, `live` never |
 | `RECORD_TRANSCRIPTS` | `1` | Whether transcripts and message text are written to disk |
+| `JEV_API_KEY` | *(empty)* | Enables Jev line judgments: joke or request, said to the bot or not |
 
 ## Project layout
 

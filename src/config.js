@@ -152,6 +152,10 @@ export function loadConfig(env = process.env) {
 		deepseekApiKey,
 		deepseekBaseUrl: str(env.DEEPSEEK_BASE_URL, 'https://api.deepseek.com'),
 		deepseekModel: str(env.DEEPSEEK_MODEL, 'deepseek-chat'),
+		// Jev (TypeSafe System One): typed judgments about each finished line. Off without a key.
+		jev: bool(env.JEV, true),
+		jevApiKey: str(env.JEV_API_KEY),
+		jevModel: str(env.JEV_MODEL, 'jev-latest'),
 		leaveDelayMs: num(env.LEAVE_DELAY_MS, 2500, { min: 0 }),
 		respondToDms: bool(env.RESPOND_DMS, true),
 		respondToMentions: bool(env.RESPOND_MENTIONS, true),
