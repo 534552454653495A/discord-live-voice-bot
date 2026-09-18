@@ -1883,7 +1883,7 @@ export class GuildSession {
 				const clipped = safeContext(item.line).slice(0, 120);
 				if (hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P) {
 					this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
-				} else if (hit.addressed <= JEV_NOT_ADDRESSED_P && hit.kind !== 'command' && hit.kind !== 'question') {
+				} else if (hit.addressed <= JEV_NOT_ADDRESSED_P) {
 					this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
 				}
 			})

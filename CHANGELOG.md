@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.1] — 2026-09-19
+
+### Fixed
+
+- **A question asked of somebody else is still not for the bot.** The "not said to you" hint was withheld
+  whenever Jev called the line a question, which conflated "is a question" with "is asked of the assistant".
+  Measured on a real line ("ya dün maçta ne oldu abi": said to the bot 37%, kind question), the hint now follows
+  the addressed probability alone, at the same cautious bar.
+
 ## [1.24.0] — 2026-09-19
 
 ### Added
