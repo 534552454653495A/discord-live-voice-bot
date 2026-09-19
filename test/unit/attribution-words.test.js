@@ -122,3 +122,37 @@ describe('the words that give the voice back (tr)', () => {
 		}
 	});
 });
+
+describe('the transcript s clock against ours', () => {
+	// Live failure, nine minutes into a session: every fragment "unsure/silence, heard: -", every line
+	// nobody's, the owner's "Ester'i kalıcı banla" refused three times and "Melis sus" never run. The
+	// transcript's positions had run 7.7 s ahead of the audio we had sent (+0.2 s at 40 s, +1.3 s at two
+	// minutes), so every fragment landed where the track had no audio at all.
+	it('measures the offset from the fragments and takes it off', () => {
+		const a = new SpeakerAttribution({ ownerId: 'o' });
+		ownerTalks(a, 100); // 0 - 2000 ms of the owner alone
+		// The transcript says this fragment sits at 2300-2500: 500 ms ahead of everything we have sent.
+		assert.equal(a.observeTranscript(2500), 500);
+		assert.equal(a.mapTranscriptMs(2300), 1800);
+		const hit = a.resolveSpeaker(a.mapTranscriptMs(2300), a.mapTranscriptMs(2500));
+		assert.equal(hit.id, 'o');
+		assert.equal(hit.reason, 'direct', 'looked up where the audio actually is');
+		// A transcript that merely lags (its end behind our position) is no offset at all.
+		const b = new SpeakerAttribution({ ownerId: 'o' });
+		ownerTalks(b, 100);
+		assert.equal(b.observeTranscript(1400), 0);
+		assert.equal(b.mapTranscriptMs(1200), 1200);
+	});
+
+	it('follows the offset as it grows, and forgets it with the session', () => {
+		const a = new SpeakerAttribution({ ownerId: 'o' });
+		ownerTalks(a, 50);
+		assert.equal(a.observeTranscript(1100), 100);
+		ownerTalks(a, 50);
+		assert.equal(a.observeTranscript(2300), 300, 'the larger, more recent offset wins');
+		assert.equal(a.observeTranscript(2100), 300, 'a smaller one does not pull it back inside the window');
+		assert.equal(a.observeTranscript(500_000), 300, 'nonsense is not a clock');
+		a.resetSession();
+		assert.equal(a.transcriptDrift, 0);
+	});
+});

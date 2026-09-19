@@ -91,7 +91,7 @@ export default {
 	log_line_decision: '[satır] {who} (karışık: {mixed}, adaylar: {candidates}): "{line}"',
 	yes: 'evet',
 	no: 'hayır',
-	log_attribution: '[atıf] {start}-{end}ms (ses {audio}) -> {who} [{confidence}/{reason}, yalnız %{solo}, duyulan: {ids}] "{text}"',
+	log_attribution: '[atıf] {start}-{end}ms (ses {audio}, kayma {drift}) -> {who} [{confidence}/{reason}, yalnız %{solo}, duyulan: {ids}] "{text}"',
 	log_jev: '[jev] {who}: {kind} %{kindP}, bota yönelik %{addressed}: "{line}"',
 	log_jev_failed: '[jev] hata ({count}): {error}',
 	jev_ready: 'Jev açık: her bitmiş satır için "bota mı söylendi, şaka mı istek mi" yargısı ({model}).',

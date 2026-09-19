@@ -29,6 +29,10 @@ const GLUE_MS = 1500;
 // A pause inside one request from the owner ("melis... artik konusabilirsin"). Longer than that is
 // two things said, and only the last one is the request.
 const OWNER_SPEECH_GAP_MS = 2500;
+// The transcript's clock against ours (see observeTranscript). The offset is the largest "end minus our
+// position" over this much of our audio; anything beyond the sanity bound is a bug, not a clock.
+const DRIFT_WINDOW_MS = 30_000;
+const DRIFT_MAX_MS = 120_000;
 const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: null, share: 0, speakers: 0 });
 // How far outside a stretch to look when the stretch itself holds no audio at all. A fragment can land
 // in the pause between two of somebody's own words: Discord sends no packets while they draw breath, so
@@ -142,6 +146,8 @@ export class SpeakerAttribution {
 		// Word level window, for EVERYONE: { word, at, owner, id, pos } (pos = audio position, null if none)
 		this.words = [];
 		this.lastPiece = null; // the previous transcript piece, to tell the rest of a word from a new one
+		this.transcriptDrift = 0; // how far the transcript's positions run ahead of our audio position
+		this.driftSamples = [];
 		// Monotonic counter stamped on every noted fragment: two fragments can share a millisecond, so
 		// ordering by `at` alone would let an interjection tie with the owner's command and slip past the gate.
 		this.noteSeq = 0;
@@ -391,6 +397,8 @@ export class SpeakerAttribution {
 	 * counter, so the positions are cleared while the arrival time stays.
 	 */
 	resetSession() {
+		this.transcriptDrift = 0;
+		this.driftSamples = [];
 		this.audioMs = 0;
 		this.track = [];
 		for (const entry of this.words) entry.pos = null;
@@ -530,7 +538,36 @@ export class SpeakerAttribution {
 		if (this.utterances.length > MAX_UTTERANCES) this.utterances.splice(0, this.utterances.length - MAX_UTTERANCES);
 	}
 
-	/** Is this piece the rest of the word the previous piece ended in? (See noteTranscript.) */
+	/**
+	 * The transcript's clock against ours. Its positions are meant to be milliseconds of the audio we
+	 * sent, and they are not: measured live they run ahead by about 1.3% -- +0.2 s at 40 s, +1.3 s at two
+	 * minutes, +7.7 s at nine -- and faster while music plays, which reads like the far end padding the
+	 * gaps between our packets with silence. Past the "nearby" tolerance every fragment lands where the
+	 * track has no audio, and every line is nobody's: no owner, no commands, no gate, for the rest of the
+	 * session. A fragment's end can never be later than the audio the far end has, so end minus our own
+	 * position, at its largest over a window, is the offset (less whatever the transcript lags, which
+	 * measured close to nothing). Called with every user fragment's end, before anything is looked up.
+	 * @returns {number} the current offset in ms
+	 */
+	observeTranscript(endMs) {
+		if (!Number.isFinite(endMs)) return this.transcriptDrift;
+		const diff = endMs - this.audioMs;
+		if (Math.abs(diff) > DRIFT_MAX_MS) return this.transcriptDrift;
+		this.driftSamples.push({ at: this.audioMs, diff });
+		const cutoff = this.audioMs - DRIFT_WINDOW_MS;
+		while (this.driftSamples.length && this.driftSamples[0].at < cutoff) this.driftSamples.shift();
+		let max = -Infinity;
+		for (const sample of this.driftSamples) if (sample.diff > max) max = sample.diff;
+		this.transcriptDrift = Math.max(0, max);
+		return this.transcriptDrift;
+	}
+
+	/** A transcript position in our timeline. */
+	mapTranscriptMs(ms) {
+		return Number.isFinite(ms) ? ms - this.transcriptDrift : ms;
+	}
+
+	/** Is this piece the rest of the word the previous piece ended in? (See noteTranscript.) */	/** Is this piece the rest of the word the previous piece ended in? (See noteTranscript.) */
 	_continuesLastWord(raw, { owner, id, pos }) {
 		const prev = this.lastPiece;
 		if (!prev) return false;

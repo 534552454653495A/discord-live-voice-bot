@@ -543,3 +543,16 @@ describe('Jev: what the model is told a line was', () => {
 		assert.equal(room.lines().length, 1);
 	});
 });
+
+describe('a transcript whose clock has run ahead of the audio', () => {
+	it('still names the speaker, because the fragment is looked up where the audio really is', (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0' });
+		room.voices('guest', 50); // 0 - 1000 ms
+		// The transcript reports the words 900 ms further on than any audio we have sent.
+		room.delta('merhaba', 1100, 1900);
+		t.mock.timers.tick(1300);
+		assert.deepEqual(room.spoken(), [{ who: 'guest', text: 'merhaba' }]);
+		assert.ok(!room.lines().some((line) => /anlaşılmıyor|does not say who/.test(line)), room.lines().join(' | '));
+	});
+});

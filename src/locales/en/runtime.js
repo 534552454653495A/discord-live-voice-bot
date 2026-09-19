@@ -91,7 +91,7 @@ export default {
 	log_line_decision: '[line] {who} (mixed: {mixed}, candidates: {candidates}): "{line}"',
 	yes: 'yes',
 	no: 'no',
-	log_attribution: '[attribution] {start}-{end}ms (audio at {audio}) -> {who} [{confidence}/{reason}, alone {solo}%, heard: {ids}] "{text}"',
+	log_attribution: '[attribution] {start}-{end}ms (audio at {audio}, drift {drift}) -> {who} [{confidence}/{reason}, alone {solo}%, heard: {ids}] "{text}"',
 	log_jev: '[jev] {who}: {kind} {kindP}%, said to the bot {addressed}%: "{line}"',
 	log_jev_failed: '[jev] failed ({count}): {error}',
 	jev_ready: 'Jev on: every finished line is judged "said to the bot? a joke or a real request?" ({model}).',

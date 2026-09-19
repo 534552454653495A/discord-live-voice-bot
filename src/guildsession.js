@@ -1350,6 +1350,16 @@ export class GuildSession {
 
 	onTranscript({ speaker, text, startMs, endMs }) {
 		const cfg = this.cfg;
+		// The transcript's clock is not ours (see SpeakerAttribution.observeTranscript): its positions run
+		// ahead of the audio we have sent, by more every minute, until a fragment lands where the track has
+		// no audio at all and every line is nobody's. The offset is measured from the fragments themselves
+		// and taken off before anything is looked up.
+		let drift = 0;
+		if (speaker === 'user') {
+			drift = this.attribution.observeTranscript(endMs);
+			startMs = this.attribution.mapTranscriptMs(startMs);
+			endMs = this.attribution.mapTranscriptMs(endMs);
+		}
 		let buf = this.transcriptBuffers.get(speaker);
 		if (!buf) {
 			buf = { parts: [], timer: null, startedAt: 0, lastEnd: null };
@@ -1386,6 +1396,7 @@ export class GuildSession {
 						start: Math.round(Number(startMs) || 0),
 						end: Math.round(Number(endMs) || 0),
 						audio: Math.round(this.attribution.audioMs),
+						drift: Math.round(drift),
 						who: hit?.id ? this.speakerLabel(hit.id) : '-',
 						confidence: hit?.confidence ?? '-',
 						reason: hit?.reason ?? '-',

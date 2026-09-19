@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] — 2026-09-19
+
+### Fixed
+
+- **Nine minutes into a session, nobody had a name.** Seen live: from about the second minute every fragment
+  read `unsure/silence, heard: -`, every line was nobody's, the owner's "Ester'i kalıcı banla" was refused three
+  times, "Melis sus" was never run, and the bot answered whoever it liked. The transcript's positions had run
+  ahead of the audio we had sent — +0.2 s at 40 s, +1.3 s at two minutes, +7.7 s at nine, faster while music
+  played — until every fragment landed where the track had no audio at all. Our own position matched the
+  wall clock to the second, so it is the far end's clock that runs fast (it reads like the gaps between our
+  packets being padded with silence). The offset is now measured from the fragments themselves — a
+  fragment's end can never be later than the audio the far end has, so end minus our position, at its
+  largest over the last thirty seconds, is the offset — and taken off every position before anything is
+  looked up. `DEBUG=1` prints it on every fragment (`kayma`). Short sessions never showed it; the many
+  `leaning/nearby` fragments in earlier logs were its early stage.
+
 ## [1.25.0] — 2026-09-19
 
 ### Fixed
