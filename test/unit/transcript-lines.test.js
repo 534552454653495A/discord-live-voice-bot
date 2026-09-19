@@ -568,7 +568,13 @@ describe('the reply gate: a line that was not for the bot gets no reply on the c
 	const gated = (verdict) => {
 		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
 		const pushed = [];
-		room.session.playback = { push: (samples) => pushed.push(samples.length), clear() {} };
+		room.session.playback = {
+			push: (samples) => pushed.push(samples.length),
+			clear() {
+				pushed.length = 0;
+				room.session.playbackCleared = (room.session.playbackCleared ?? 0) + 1;
+			},
+		};
 		const asked = [];
 		room.session.jev = { enabled: true, model: 'fake', judge: (input) => (asked.push(input), verdict(input)) };
 		return { room, pushed, asked };
@@ -587,6 +593,7 @@ describe('the reply gate: a line that was not for the bot gets no reply on the c
 		assert.deepEqual(pushed, [], 'held, not played');
 		await settle(); // the verdict: not for the bot
 		assert.deepEqual(pushed, [], 'dropped');
+		assert.equal(room.session.playbackCleared, 1, 'and whatever the reply had already queued is thrown away');
 		room.session.onAssistantAudio(loud());
 		assert.deepEqual(pushed, [], 'and the rest of that reply too');
 		assert.match(room.lines().join(' '), /söylenmedi|not said to you/, 'the model is told its reply was not played');
@@ -638,7 +645,7 @@ describe('the reply gate: a line that was not for the bot gets no reply on the c
 		t.mock.timers.tick(200);
 		room.session.onAssistantAudio(loud());
 		assert.deepEqual(pushed, [], 'held');
-		t.mock.timers.tick(1500);
+		t.mock.timers.tick(2000);
 		assert.deepEqual(pushed, [480], 'a slow Jev costs a moment, never the reply');
 	});
 
@@ -747,5 +754,72 @@ describe('the reply gate on a line still being spoken', () => {
 		room.session.noteSpeechEnd({ active: ['b'] });
 		room.session.noteSpeechEnd({ active: [] });
 		assert.deepEqual(ends, ['a', 'b']);
+	});
+});
+
+describe('the reply gate keeps a kept-off turn quiet, and an aside needs an invitation', () => {
+	const loud = () => Buffer.from(new Int16Array(480).fill(3000).buffer);
+	const quiet = () => Buffer.from(new Int16Array(480).fill(0).buffer);
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+	const gated = (verdict) => {
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		const pushed = [];
+		room.session.playback = { push: (samples) => pushed.push(samples.length), clear() {} };
+		room.session.store = { getActive: () => ({ name: 'Melis' }), list: () => [], setActive: async () => true };
+		room.session.jev = { enabled: true, model: 'fake', judge: async (input) => verdict(input.line) };
+		return { room, pushed };
+	};
+	/** One turn: the previous line closes, the person speaks this, stops, and the first question goes out. */
+	const turn = async (t, room, line, from) => {
+		room.flush();
+		room.voices('guest', 20);
+		room.delta(line, from, from + 400);
+		room.session.onUserSpeechEnd('guest');
+		t.mock.timers.tick(200);
+		await settle();
+	};
+
+	// Live: "Adem hoş geldin" was kept off -- and five seconds later the bot said "that conversation is
+	// yours, I will stay out of it", which is the same interruption in fewer words.
+	it('keeps a second reply to the same line off the channel too, until the next turn', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const { room, pushed } = gated(() => ({ addressed: 0.1, kind: 'chat', kindP: 0.9, confidence: 0.9 }));
+		await turn(t, room, 'adem hos geldin', 0);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [], 'the first reply is kept off');
+		room.session.suppress.lastLoud = Date.now() - 1000; // that reply ended a second ago
+		room.session.onAssistantAudio(quiet());
+		room.session.onAssistantAudio(loud()); // "hmm, that is your conversation"
+		assert.deepEqual(pushed, [], 'and so is the next one');
+		room.session.lastAssistantSpokeAt = 0; // the room has been quiet: a hold may start
+		room.session.onUserSpeechEnd('guest'); // a new turn
+		assert.equal(room.session.suppress, null, 'is judged anew');
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [], 'held while the new turn is judged');
+		t.mock.timers.tick(2000); // nothing was asked (no new words), so the hold runs out
+		assert.deepEqual(pushed, [480], 'and its reply plays');
+	});
+
+	// Live: with the owner talking to Adem, "İyi kanka ben de öyle takılıyorum" came back 49-52% and the
+	// bot joined in. Once the room is talking among themselves, a doubt is a no.
+	it('needs a clear invitation once the room is talking among themselves', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const verdicts = { 'adem naber': 0.1, 'iyi kanka ben de oyle': 0.5, 'sence hava nasil': 0.5 };
+		const { room, pushed } = gated((line) => ({ addressed: verdicts[line] ?? 0.9, kind: 'chat', kindP: 0.8, confidence: 0.8 }));
+		await turn(t, room, 'adem naber', 0);
+		assert.ok(room.logged.some((line) => /kenar sohbet:|aside:/.test(line)), 'the aside begins');
+		await turn(t, room, 'iyi kanka ben de oyle', 400);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [], 'a doubt inside an aside is silence');
+		await turn(t, room, 'melis naber', 800);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480], 'the name is the invitation, and it plays at once');
+		assert.ok(room.logged.some((line) => /kenar sohbet bitti|aside over/.test(line)), 'the aside is over');
+		room.session.lastAssistantSpokeAt = 0; // quiet again: a hold may start
+		await turn(t, room, 'sence hava nasil', 1200);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480], 'outside an aside the same doubt waits');
+		t.mock.timers.tick(2000);
+		assert.deepEqual(pushed, [480, 480], 'and plays when the hold runs out');
 	});
 });

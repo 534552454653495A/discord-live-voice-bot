@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.2] — 2026-09-19
+
+### Fixed
+
+- **A kept-off reply still played, and "I will stay out of it" is chipping in.** Heard live: "Adem hoş
+  geldin" was judged 7% for the bot and kept off — and the room heard "o muhabbet sizde kalsın, ben
+  karışmıyorum" anyway, because the model's first audio came 1.5 s after the person stopped, the hold ran
+  out at exactly 1.5 s, and the model sends audio faster than it plays, so seconds of the reply were queued
+  before the verdict cut the rest. Then, five seconds later and outside the four second window, it said "o
+  konuşma sizin, ben araya girmem" — the same interruption in fewer words. Now: the hold lasts 2 s; when a
+  reply is kept off, whatever it had already queued is thrown away; the window lasts the whole turn (until
+  the next stop, ten seconds at most) and covers every reply the model produces in it; and the model is
+  told, in the instructions and in the note, that announcing its silence is chipping in.
+- **A doubt inside an aside is a no.** With the owner talking to Adem, "İyi kanka ben de öyle takılıyorum"
+  came back 50% for the bot and the bot joined in. Once a line was not for the bot, the room is talking among
+  themselves, and for twenty seconds the bot speaks only on a clear invitation: its name, or a verdict above
+  60%. Outside an aside a doubt still waits for more of the line.
+
 ## [1.29.1] — 2026-09-19
 
 ### Fixed

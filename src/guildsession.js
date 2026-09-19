@@ -124,8 +124,18 @@ const JEV_SETTLE_MS = 450;
 // a second of it: the hold starts there, and the first question is asked this soon after, from whatever
 // the transcript has delivered.
 const JEV_SPEECH_END_SETTLE_MS = 200;
-const REPLY_HOLD_MAX_MS = 1500;
-const REPLY_SUPPRESS_MS = 4000;
+// Measured: the model's first audio comes 0.4 to 1.7 s after a person stops, and Jev's answer 0.3 to
+// 1.2 s after it is asked. The hold has to outlast the slower of the two, or the reply slips out in the
+// moment between them -- which is exactly what happened at 1.5 s.
+const REPLY_HOLD_MAX_MS = 2000;
+// A reply kept off the channel is kept off for the whole turn: the model, told its answer was not
+// played, tends to answer again ("hmm", "that conversation is yours") seconds later, and that is the
+// same interruption in fewer words. The window ends at the next stop, or here at the latest.
+const REPLY_SUPPRESS_MS = 10_000;
+// An aside: once a line was not for the bot, the room is talking among themselves, and for this long
+// the bot needs a clear invitation -- its name, or a verdict above JEV_ADDRESSED_P -- before it speaks.
+// A doubt is answered with silence, which is what a person would do.
+const ASIDE_MS = 20_000;
 // The session's own report on itself: every few minutes, once enough has happened to say anything.
 const HEALTH_EVERY_MS = 300_000;
 const HEALTH_MIN_FRAGMENTS = 20;
@@ -364,6 +374,7 @@ export class GuildSession {
 		this.earlyJudgeTimer = null;
 		this.speakingNow = []; // who the mixer said was speaking on the last frame (noteSpeechEnd)
 		this.closedLineToJudge = null; // a line that closed while a judgment was still pending
+		this.asideUntil = 0; // while the room is talking among themselves, the bot needs a clear invitation
 		this.replyHold = null;
 		this.suppress = null;
 		this.lastSuppressedAt = 0;
@@ -2014,6 +2025,7 @@ export class GuildSession {
 	 */
 	onUserSpeechEnd() {
 		if (!this.jev?.enabled || !this.live?.ready || this.localMode || !this.cfg.jevReplyGate) return;
+		this.suppress = null; // a new turn is judged anew; the hold protects it until then
 		this.holdReply();
 		if (this.earlyJudgeTimer) clearTimeout(this.earlyJudgeTimer);
 		this.earlyJudgeTimer = setTimeout(() => this.judgeEarly(), JEV_SPEECH_END_SETTLE_MS);
@@ -2040,6 +2052,7 @@ export class GuildSession {
 		const tokens = normalize(text).split(' ').filter(Boolean);
 		if (tokens.some((token) => this.wakeWordSet().has(token))) {
 			this.earlyJudge = { text, id, pending: false, flushed: false, byName: true, verdict: { addressed: 1, byName: true } };
+			this.leaveAside();
 			this.releaseReplyHold();
 			return;
 		}
@@ -2092,8 +2105,14 @@ export class GuildSession {
 	 * is told so. Anything else: the held audio goes out as if nothing had happened.
 	 */
 	applyVerdict(hit, { text, id, ms = null, final = false }) {
-		const notForBot = Boolean(hit) && hit.addressed <= JEV_NOT_ADDRESSED_P;
-		const banter = Boolean(hit) && hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P;
+		// In an aside a doubt is a no: the room is talking among themselves, and the bot speaks only on a
+		// clear invitation. Outside one, a doubt on a line still being spoken waits for more of the line.
+		const aside = Date.now() < this.asideUntil;
+		const said = Boolean(hit);
+		const notForBot = said && (hit.addressed <= JEV_NOT_ADDRESSED_P || (aside && hit.addressed < JEV_ADDRESSED_P));
+		const banter = said && hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P;
+		if (said && hit.addressed <= JEV_NOT_ADDRESSED_P) this.enterAside();
+		if (said && hit.addressed >= JEV_ADDRESSED_P) this.leaveAside();
 		this.health.jevVerdict(hit, ms, { notForBot, banter });
 		this.trace?.jev({ text, id, ms, hit, notForBot, banter });
 		if (!hit) {
@@ -2123,7 +2142,12 @@ export class GuildSession {
 				const now = Date.now();
 				const inProgress = now - this.lastAssistantSpokeAt <= SILENCE_GAP_MS;
 				this.suppress = { until: now + REPLY_SUPPRESS_MS, started: inProgress, lastLoud: this.lastAssistantSpokeAt, line: text };
-				if (inProgress) this.lastSuppressedAt = now;
+				if (inProgress) {
+					// The model sends audio faster than it plays: seconds of the reply may already be queued,
+					// and a reply kept off the channel is kept off whole, not from this frame on.
+					this.lastSuppressedAt = now;
+					this.playback.clear();
+				}
 				this.health.jevSuppressed();
 			}
 			this.log(t('runtime.log_reply_suppressed', { addressed: Math.round(hit.addressed * 100), line: text.slice(0, 40) }));
@@ -2185,15 +2209,16 @@ export class GuildSession {
 	suppressing(loud) {
 		const now = Date.now();
 		const state = this.suppress;
+		if (now > state.until) {
+			this.suppress = null;
+			return false;
+		}
 		if (!state.started) {
-			if (now > state.until) {
-				this.suppress = null;
-				return false;
-			}
 			if (loud) {
 				state.started = true;
 				state.lastLoud = now;
 				this.lastSuppressedAt = now;
+				this.playback.clear();
 			}
 			return true;
 		}
@@ -2201,11 +2226,22 @@ export class GuildSession {
 			state.lastLoud = now;
 			return true;
 		}
-		if (now - state.lastLoud > SILENCE_GAP_MS) {
-			this.suppress = null;
-			return false;
-		}
+		// That reply has ended. The window has not: a second reply to the same line is kept off as well.
+		if (now - state.lastLoud > SILENCE_GAP_MS) state.started = false;
 		return true;
+	}
+
+	/** The room is talking among themselves: from here the bot speaks only on a clear invitation. */
+	enterAside() {
+		const was = Date.now() < this.asideUntil;
+		this.asideUntil = Date.now() + ASIDE_MS;
+		if (!was) this.log(t('runtime.log_aside_on'));
+	}
+
+	/** Somebody spoke to the bot, clearly or by name: the aside is over. */
+	leaveAside() {
+		if (Date.now() < this.asideUntil) this.log(t('runtime.log_aside_off'));
+		this.asideUntil = 0;
 	}
 
 	/** The words that mean "you": the active character's name and the generic ones. */
