@@ -81,3 +81,19 @@ describe('Jev: does the owner s line ask for this tool', () => {
 		assert.equal(await broken.asks({ line: 'x', tool: 't' }), null);
 	});
 });
+
+describe('Jev: what it is told about the room', () => {
+	it('sends who is in the channel and what the bot last said', async () => {
+		const sent = [];
+		const client = {
+			systemOne: async (request) => {
+				sent.push(request);
+				return { answers: { addressed: { noul: 0.1 }, kind: { choice: 'chat', confidence: 0.8, probabilities: { chat: 0.8 } } } };
+			},
+		};
+		const jev = createJev({ jev: true, jevApiKey: 'k', jevModel: 'jev-latest' }, { client });
+		await jev.judge({ line: 'Adem naber', speaker: 'kaan', botName: 'Melis', people: ['kaan (owner)'], assistantLastLine: 'sen naber?' });
+		assert.deepEqual(sent[0].state.people_in_voice_channel, ['kaan (owner)', 'Melis (assistant)']);
+		assert.equal(sent[0].state.assistant_last_line, 'sen naber?');
+	});
+});

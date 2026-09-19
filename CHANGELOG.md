@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] — 2026-09-19
+
+### Added
+
+- **A line that was not for the bot gets no reply on the channel.** Heard live: the owner, alone in the channel
+  with the bot, said "Adem naber" — to Adem, who was not there — and the bot answered "valla bilmiyorum canım",
+  then "o cevap versin o zaman". Telling the model afterwards changes nothing, because it answers about a
+  second after the person stops, and the line was only judged once it had closed, two seconds later. So the
+  line is now judged the moment its pieces stop arriving (300 ms), the bot's audio is held for up to 1.5 s
+  while Jev answers, and when the answer is "not for the bot" the reply is dropped and kept off the channel
+  until it ends, the model is told its answer was not played, and the log and the record carry the reply as
+  one nobody heard (`bot (kanala verilmedi) > …`). A line that names the bot never waits; a slow Jev costs a
+  moment, never the reply; `JEV_REPLY_GATE=0` goes back to only telling the model. Jev is also told who is in
+  the channel and what the bot last said, which is what turns "Adem naber" from a coin toss (50%) into a clear
+  no (6%) — measured — while "Melis naber" stays a clear yes (96%) and a reply to the bot's own "sen naber?"
+  is recognised as one (92%). The local brain asks the same question before answering, so people talking
+  among themselves get no reply there either. The model is told the rule in words as well.
+
 ## [1.26.0] — 2026-09-19
 
 ### Fixed

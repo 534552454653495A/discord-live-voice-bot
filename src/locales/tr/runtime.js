@@ -87,6 +87,7 @@ export default {
 	// ---------------------------------------------------------------- transcripts
 	transcript_in: 'kanal> {line}',
 	transcript_out: 'bot > {line}',
+	transcript_out_suppressed: 'bot (kanala verilmedi) > {line}',
 	transcript_user_line: 'kanal> {name}: {line}',
 	log_line_decision: '[satır] {who} (karışık: {mixed}, adaylar: {candidates}): "{line}"',
 	yes: 'evet',
@@ -96,7 +97,9 @@ export default {
 	log_jev_failed: '[jev] hata ({count}): {error}',
 	jev_ready: 'Jev açık: her bitmiş satır için "bota mı söylendi, şaka mı istek mi" yargısı ({model}).',
 	jev_banter: 'Az önceki söz şakaydı, laf sokmaydı; gerçek bir istek değil: "{line}". Ciddiye alma, karakterde kal.',
-	jev_not_addressed: 'Az önceki söz sana söylenmedi, insanlar kendi aralarında konuşuyor: "{line}". Araya girme.',
+	jev_not_addressed: 'Az önceki söz sana söylenmedi ("{line}"): başkasına ya da kendi aralarında. Cevabın kanala verilmedi; o konuya girme, cevap verme.',
+	log_reply_suppressed: '[jev] cevap kanala verilmedi, söz bota yönelik değildi (%{addressed}): "{line}"',
+	log_local_not_addressed: '[jev] yerel: cevap yok, söz bota yönelik değil (%{addressed}): "{line}"',
 	speaker_correction: 'Düzeltme: az önceki "{line}" sözünü söyleyen kişi {name}{owner}.',
 	log_context_correction: '[bağlam] düzeltme: "{line}" -> {name}',
 	command_error: 'Komut hatası: {error}',

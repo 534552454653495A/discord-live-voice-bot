@@ -104,6 +104,15 @@ const NO_AUDIO_SAMPLE = 6;
 const JEV_BANTER_P = 0.7;
 const JEV_NOT_ADDRESSED_P = 0.25;
 const JEV_MIN_CHARS = 4;
+// The reply gate. A line is judged as soon as its pieces stop arriving for this long, well before the
+// line is closed for the record, because the model starts answering about a second after the person
+// stops and the verdict has to be there first. While Jev answers, the bot's audio is held for at most
+// this long and then played anyway: a slow Jev costs a moment, never the reply. A reply to a line that
+// was not for the bot is kept off the channel for the length of that reply, with this much patience
+// for it to start.
+const JEV_SETTLE_MS = 300;
+const REPLY_HOLD_MAX_MS = 1500;
+const REPLY_SUPPRESS_MS = 4000;
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -323,6 +332,15 @@ export class GuildSession {
 		// The private conversation the bot most recently wrote in, and the status line to return to.
 		this.lastDm = null;
 		this.lastTextChannelId = null;
+		// The reply gate (see judgeEarly): the current early judgment of the line being spoken, the bot's
+		// audio held back while Jev answers, the reply being kept off the channel, and what the bot last
+		// said that the channel actually heard.
+		this.earlyJudge = null;
+		this.earlyJudgeTimer = null;
+		this.replyHold = null;
+		this.suppress = null;
+		this.lastSuppressedAt = 0;
+		this.lastHeardAssistantLine = '';
 		this.presence = null;
 		// Told to be quiet by the owner. This is a state, not a request to the model: while it is on, the
 		// bot's audio is dropped before it reaches the channel, so nobody else can talk it into speaking.
@@ -956,6 +974,8 @@ export class GuildSession {
 				this.log(t('runtime.command_error', { error: err.message }));
 			}
 		}
+		// Was it for the bot at all? With Jev the question is put directly; without it, as before, everything is.
+		if (!(await this.localLineForBot(line, userId))) return;
 		// Speak it as it is written, not after it is finished. The brain hands over each piece of the reply
 		// as it arrives and enqueueLocalSpeech already cuts on sentence endings, so the first sentence is on
 		// its way to Chatterbox while the rest is still being generated. Whatever the stream produced is
@@ -1082,37 +1102,7 @@ export class GuildSession {
 			this.memoryHinted.clear();
 			this.announceRoster();
 		});
-		session.on('audio', (buffer) => {
-			// In local mode the GPT-Live audio is not used: the text is turned into speech locally.
-			if (this.localMode) return;
-			const usable = buffer.length & ~1;
-			if (usable === 0) return;
-			if (buffer.byteOffset % 2 !== 0) buffer = Buffer.from(buffer.subarray(0, usable));
-			const samples = new Int16Array(buffer.buffer, buffer.byteOffset, usable >> 1);
-
-			// The model can send audio frames during silence too; real audio is required before it counts as
-			// "speaking", otherwise the latency measurement (and the 5 s rule) fires constantly and means nothing.
-			if (peakOf(samples) > AUDIO_PEAK_MIN) {
-				// The measurement only makes sense for a reply that starts after a silence (full-duplex stream).
-				if (Date.now() - this.lastAssistantSpokeAt > SILENCE_GAP_MS) {
-					const responseMs = this.latency.assistantAudio();
-					if (responseMs !== null && responseMs >= MIN_LOGGED_MS) {
-						this.activity.push({
-							kind: 'latency',
-							whoName: this.persona().name ?? 'bot',
-							text: t('runtime.seconds_value', { seconds: (responseMs / 1000).toFixed(1) }),
-							meta: { type: t('runtime.latency_kind_response'), note: t('runtime.latency_note_response') },
-						});
-						this.log(t('runtime.log_latency_response', { seconds: (responseMs / 1000).toFixed(1) }));
-					}
-				}
-				this.lastAssistantSpokeAt = Date.now();
-				this.idle.touch(); // while the bot is speaking the session must not count as "idle"
-			}
-			// Silenced by the owner: the audio is thrown away here, at the last step before the channel, so
-			// that no amount of persuasion inside the conversation can put it back.
-			if (!this.silenced) this.playback.push(samples);
-		});
+		session.on('audio', (buffer) => this.onAssistantAudio(buffer));
 		session.on('transcript', (event) => {
 			if (this.live !== session) return; // a trailing delta from a socket that has already been replaced
 			this.onTranscript(event);
@@ -1384,6 +1374,9 @@ export class GuildSession {
 			// ended up naming two different people for the same words.
 			const hit = this.attribution.noteTranscript(text, { startMs: from, endMs });
 			this.lastUserDeltaAt = Date.now();
+			// The reply gate asks its question as soon as the pieces stop for a moment (see judgeEarly).
+			if (this.earlyJudgeTimer) clearTimeout(this.earlyJudgeTimer);
+			this.earlyJudgeTimer = setTimeout(() => this.judgeEarly(), JEV_SETTLE_MS);
 			if (hit) part = { text, startMs: from, endMs, id: hit.id, sure: hit.sure, confidence: hit.confidence, ids: hit.ids };
 			// From the audio position to the wall clock: when did the user actually stop speaking?
 			const lag = Number.isFinite(endMs) ? Math.max(0, this.attribution.audioMs - endMs) : 0;
@@ -1481,10 +1474,14 @@ export class GuildSession {
 			const fresh = stripSpokenPrefix(line, previous);
 			this.lastSpokenLine = { text: line, at: Date.now() };
 			if (!fresh) return;
-			if (cfg.transcripts) this.log(t('runtime.transcript_out', { line: fresh }));
+			// A reply the application kept off the channel (the line was not for the bot) is recorded as such,
+			// and never becomes "what the bot last said" for the next judgment: nobody heard it.
+			const suppressed = !this.localMode && this.lastSuppressedAt > 0 && Date.now() - this.lastSuppressedAt < REPLY_SUPPRESS_MS;
+			if (cfg.transcripts) this.log(t(suppressed ? 'runtime.transcript_out_suppressed' : 'runtime.transcript_out', { line: fresh }));
 			// Local mode: this text is turned into speech by Chatterbox and pushed to Discord.
 			if (this.localMode) this.enqueueLocalSpeech(fresh);
-			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: fresh });
+			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: fresh, meta: suppressed ? { suppressed: true } : undefined });
+			if (!suppressed) this.lastHeardAssistantLine = fresh;
 			return;
 		}
 
@@ -1665,8 +1662,7 @@ export class GuildSession {
 		const now = Date.now();
 		if (now - this.lastAssistantSpokeAt < 5000) return; // the model already spoke, or is speaking
 		if (now - this.lastWakeNudgeAt < 15_000) return; // do not nudge too often
-		const active = this.store.getActive();
-		const wakeWords = new Set([active?.name, ...WAKE_WORDS].filter(Boolean).map((word) => normalize(word)).filter(Boolean));
+		const wakeWords = this.wakeWordSet();
 		const tokens = normalize(line).split(' ').filter(Boolean);
 		if (!tokens.some((token) => wakeWords.has(token))) return;
 		this.lastWakeNudgeAt = now;
@@ -1867,6 +1863,40 @@ export class GuildSession {
 		this.log(t('voice.speaking', { ids: ids.map((id) => this.speakerLabel(id)).join(', ') }));
 	}
 
+	/** The model's voice, one chunk at a time. Kept as a method so that the reply gate can be tested without a socket. */
+	onAssistantAudio(buffer) {
+		// In local mode the GPT-Live audio is not used: the text is turned into speech locally.
+		if (this.localMode) return;
+		const usable = buffer.length & ~1;
+		if (usable === 0) return;
+		if (buffer.byteOffset % 2 !== 0) buffer = Buffer.from(buffer.subarray(0, usable));
+		const samples = new Int16Array(buffer.buffer, buffer.byteOffset, usable >> 1);
+
+		// The model can send audio frames during silence too; real audio is required before it counts as
+		// "speaking", otherwise the latency measurement (and the 5 s rule) fires constantly and means nothing.
+		const loud = peakOf(samples) > AUDIO_PEAK_MIN;
+		if (loud) {
+			// The measurement only makes sense for a reply that starts after a silence (full-duplex stream).
+			if (Date.now() - this.lastAssistantSpokeAt > SILENCE_GAP_MS) {
+				const responseMs = this.latency.assistantAudio();
+				if (responseMs !== null && responseMs >= MIN_LOGGED_MS) {
+					this.activity.push({
+						kind: 'latency',
+						whoName: this.persona().name ?? 'bot',
+						text: t('runtime.seconds_value', { seconds: (responseMs / 1000).toFixed(1) }),
+						meta: { type: t('runtime.latency_kind_response'), note: t('runtime.latency_note_response') },
+					});
+					this.log(t('runtime.log_latency_response', { seconds: (responseMs / 1000).toFixed(1) }));
+				}
+			}
+			this.lastAssistantSpokeAt = Date.now();
+			this.idle.touch(); // while the bot is speaking the session must not count as "idle"
+		}
+		// Silenced by the owner: the audio is thrown away here, at the last step before the channel, so
+		// that no amount of persuasion inside the conversation can put it back.
+		this.deliverAssistantAudio(samples, loud);
+	}
+
 	/**
 	 * Ask Jev what a finished line IS, and tell the model only when the answer changes how it should
 	 * treat the line. Non-blocking: the line has already gone to the model under its speaker's name; a
@@ -1875,49 +1905,231 @@ export class GuildSession {
 	 */
 	judgeLine(item) {
 		if (!this.jev?.enabled || !item.id || item.line.length < JEV_MIN_CHARS) return;
-		const who = this.speakerLabel(item.id);
+		// Usually the line was judged while it was still being spoken (judgeEarly) and the verdict has
+		// already done its work; a second round trip on the same words would only cost money.
+		const early = this.earlyJudge;
+		if (early && item.line.startsWith(early.text.slice(0, Math.min(12, early.text.length)))) {
+			early.flushed = true;
+			if (!early.pending) this.earlyJudge = null;
+			return;
+		}
 		void this.jev
-			.judge({
-				line: item.line,
-				speaker: who,
-				botName: this.persona().name ?? 'bot',
-				ownerSpeaking: this.isOwnerId(item.id),
-				recent: this.recentUserText,
-			})
-			.then((hit) => {
-				if (!hit) return;
-				if (this.cfg.debug) {
-					this.log(
-						t('runtime.log_jev', {
-							who,
-							kind: hit.kind,
-							kindP: Math.round(hit.kindP * 100),
-							addressed: Math.round(hit.addressed * 100),
-							line: item.line.slice(0, 40),
-						}),
-					);
-				}
-				if (!this.live?.ready) return;
-				const clipped = safeContext(item.line).slice(0, 120);
-				if (hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P) {
-					this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
-				} else if (hit.addressed <= JEV_NOT_ADDRESSED_P) {
-					this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
-				}
-			})
+			.judge(this.judgeInput(item.line, item.id))
+			.then((hit) => this.applyVerdict(hit, { text: item.line, id: item.id }))
 			.catch(() => {});
+	}
+
+	/**
+	 * Judge the line being spoken as soon as its pieces stop arriving for a moment -- before it is closed
+	 * for the record, because the model starts answering about a second after the person stops, and
+	 * "was that for me at all" has to be answered first. A line that names the bot never waits. Otherwise
+	 * the bot's audio is held while Jev answers (see holdReply), and the verdict decides whether the
+	 * reply reaches the channel.
+	 */
+	judgeEarly() {
+		this.earlyJudgeTimer = null;
+		if (!this.jev?.enabled || !this.live?.ready || this.localMode) return;
+		const buf = this.transcriptBuffers.get('user');
+		if (!buf?.parts.length) return;
+		const text = runText({ parts: buf.parts });
+		const named = buf.parts.filter((part) => part.id);
+		const id = named.length ? named[named.length - 1].id : null;
+		if (!id || text.length < JEV_MIN_CHARS) return;
+		const early = this.earlyJudge;
+		if (early && !early.flushed && text.startsWith(early.text)) return; // the same line, already asked about
+		const tokens = normalize(text).split(' ').filter(Boolean);
+		if (tokens.some((token) => this.wakeWordSet().has(token))) {
+			this.earlyJudge = { text, id, pending: false, flushed: false, verdict: { addressed: 1, byName: true } };
+			this.releaseReplyHold();
+			return;
+		}
+		const judge = { text, id, pending: true, flushed: false, verdict: null };
+		this.earlyJudge = judge;
+		this.holdReply();
+		void this.jev
+			.judge(this.judgeInput(text, id))
+			.then((hit) => {
+				judge.pending = false;
+				judge.verdict = hit;
+				if (this.earlyJudge === judge) this.applyVerdict(hit, { text, id });
+				else this.releaseReplyHold();
+			})
+			.catch(() => this.releaseReplyHold());
+	}
+
+	/** What Jev is told about a line: the words, who said them, who is in the room, what the bot last said. */
+	judgeInput(text, id) {
+		return {
+			line: text,
+			speaker: this.speakerLabel(id),
+			botName: this.persona().name ?? 'bot',
+			ownerSpeaking: this.isOwnerId(id),
+			recent: this.recentUserText,
+			people: this.rosterNames().map((entry) => (entry.owner ? `${entry.name} (owner)` : entry.name)),
+			assistantLastLine: this.lastHeardAssistantLine,
+		};
+	}
+
+	/**
+	 * What the verdict does. Not for the bot: the held audio is dropped, the reply that follows is kept
+	 * off the channel until it ends, and the model is told its answer was not played. Banter: the model
+	 * is told so. Anything else: the held audio goes out as if nothing had happened.
+	 */
+	applyVerdict(hit, { text, id }) {
+		if (!hit) {
+			this.releaseReplyHold();
+			return;
+		}
+		const who = this.speakerLabel(id);
+		if (this.cfg.debug) {
+			this.log(
+				t('runtime.log_jev', {
+					who,
+					kind: hit.kind,
+					kindP: Math.round(hit.kindP * 100),
+					addressed: Math.round(hit.addressed * 100),
+					line: text.slice(0, 40),
+				}),
+			);
+		}
+		const clipped = safeContext(text).slice(0, 120);
+		if (hit.addressed <= JEV_NOT_ADDRESSED_P) {
+			this.dropReplyHold();
+			if (this.cfg.jevReplyGate) {
+				// A reply already under way is cut at its next pause; one that has not started yet is dropped
+				// when it starts, if it starts within the window.
+				const now = Date.now();
+				const inProgress = now - this.lastAssistantSpokeAt <= SILENCE_GAP_MS;
+				this.suppress = { until: now + REPLY_SUPPRESS_MS, started: inProgress, lastLoud: this.lastAssistantSpokeAt, line: text };
+				if (inProgress) this.lastSuppressedAt = now;
+			}
+			this.log(t('runtime.log_reply_suppressed', { addressed: Math.round(hit.addressed * 100), line: text.slice(0, 40) }));
+			if (this.live?.ready) this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
+			return;
+		}
+		this.releaseReplyHold();
+		if (hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P && this.live?.ready) {
+			this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
+		}
+	}
+
+	/** Hold the bot's audio back while Jev answers -- only when no reply is playing yet; otherwise it is too late to hold. */
+	holdReply() {
+		if (!this.cfg.jevReplyGate || this.localMode) return;
+		if (Date.now() - this.lastAssistantSpokeAt <= SILENCE_GAP_MS) return;
+		this.releaseReplyHold();
+		this.replyHold = { samples: [], since: Date.now(), timer: setTimeout(() => this.releaseReplyHold(), REPLY_HOLD_MAX_MS) };
+	}
+
+	/** Let the held audio out, in order. */
+	releaseReplyHold() {
+		const hold = this.replyHold;
+		if (!hold) return;
+		clearTimeout(hold.timer);
+		this.replyHold = null;
+		if (this.silenced) return;
+		for (const samples of hold.samples) this.playback.push(samples);
+	}
+
+	/** Throw the held audio away. */
+	dropReplyHold() {
+		const hold = this.replyHold;
+		if (!hold) return;
+		clearTimeout(hold.timer);
+		this.replyHold = null;
+	}
+
+	/**
+	 * The last step before the channel. Silenced by the owner: nothing goes out. Kept off by the reply
+	 * gate: nothing goes out until that reply ends. Held: kept until the verdict. Otherwise: play.
+	 */
+	deliverAssistantAudio(samples, loud) {
+		if (this.silenced) return;
+		if (this.suppress && this.suppressing(loud)) return;
+		if (this.replyHold) {
+			this.replyHold.samples.push(samples);
+			return;
+		}
+		this.playback.push(samples);
+	}
+
+	/** Is this chunk part of the reply being kept off the channel? Ends at the reply's next pause, or when no reply came. */
+	suppressing(loud) {
+		const now = Date.now();
+		const state = this.suppress;
+		if (!state.started) {
+			if (now > state.until) {
+				this.suppress = null;
+				return false;
+			}
+			if (loud) {
+				state.started = true;
+				state.lastLoud = now;
+				this.lastSuppressedAt = now;
+			}
+			return true;
+		}
+		if (loud) {
+			state.lastLoud = now;
+			return true;
+		}
+		if (now - state.lastLoud > SILENCE_GAP_MS) {
+			this.suppress = null;
+			return false;
+		}
+		return true;
+	}
+
+	/** The words that mean "you": the active character's name and the generic ones. */
+	wakeWordSet() {
+		const active = this.store.getActive();
+		return new Set([active?.name, ...WAKE_WORDS].filter(Boolean).map((word) => normalize(word)).filter(Boolean));
+	}
+
+	/** Who is in the voice channel (people, not bots), with the owner marked. */
+	rosterNames() {
+		const names = [];
+		if (!this.voice.channelId || !this.guild) return names;
+		for (const state of this.guild.voiceStates.cache.values()) {
+			if (state.channelId !== this.voice.channelId) continue;
+			const member = state.member ?? this.guild.members.cache.get(state.id);
+			if (!member || member.user?.bot) continue;
+			names.push({ name: this.speakerLabel(member.id), owner: this.isOwnerId(member.id) });
+		}
+		return names;
+	}
+
+	/**
+	 * Local brain: was this line for the bot at all? The local path has no model listening to decide
+	 * for itself, so with Jev the question is put directly, and people talking among themselves get no
+	 * reply. A line that names the bot is always for it; without Jev everything is, as before.
+	 */
+	async localLineForBot(line, userId) {
+		if (!this.jev?.enabled || this.cfg.localBrainRespond !== 'auto') return true;
+		const tokens = normalize(line).split(' ').filter(Boolean);
+		if (tokens.some((token) => this.wakeWordSet().has(token))) return true;
+		const hit = await this.jev.judge(this.judgeInput(line, userId));
+		if (!hit) return true;
+		if (this.cfg.debug) {
+			this.log(
+				t('runtime.log_jev', {
+					who: this.speakerLabel(userId),
+					kind: hit.kind,
+					kindP: Math.round(hit.kindP * 100),
+					addressed: Math.round(hit.addressed * 100),
+					line: line.slice(0, 40),
+				}),
+			);
+		}
+		if (hit.addressed > JEV_NOT_ADDRESSED_P) return true;
+		this.log(t('runtime.log_local_not_addressed', { addressed: Math.round(hit.addressed * 100), line: line.slice(0, 40) }));
+		return false;
 	}
 
 	/** Tells the model who is in the channel (when the session opens and on joins/leaves). */
 	announceRoster(prefix = t('runtime.roster_prefix')) {
 		if (!this.live?.ready || !this.voice.channelId || !this.guild) return;
-		const names = [];
-		for (const state of this.guild.voiceStates.cache.values()) {
-			if (state.channelId !== this.voice.channelId) continue;
-			const member = state.member ?? this.guild.members.cache.get(state.id);
-			if (!member || member.user?.bot) continue;
-			names.push(`${this.speakerLabel(member.id)}${this.isOwnerId(member.id) ? t('runtime.owner_suffix') : ''}`);
-		}
+		const names = this.rosterNames().map((entry) => `${entry.name}${entry.owner ? t('runtime.owner_suffix') : ''}`);
 		if (!names.length) return;
 		this.live.appendContext('instructions', t('runtime.roster_context', { prefix, names: safeContext(names.join(', ')) }));
 		if (this.cfg.transcripts) this.log(t('runtime.log_context_roster', { names: names.join(', ') }));

@@ -87,6 +87,7 @@ export default {
 	// ---------------------------------------------------------------- transcripts
 	transcript_in: 'channel> {line}',
 	transcript_out: 'bot > {line}',
+	transcript_out_suppressed: 'bot (kept off the channel) > {line}',
 	transcript_user_line: 'channel> {name}: {line}',
 	log_line_decision: '[line] {who} (mixed: {mixed}, candidates: {candidates}): "{line}"',
 	yes: 'yes',
@@ -96,7 +97,9 @@ export default {
 	log_jev_failed: '[jev] failed ({count}): {error}',
 	jev_ready: 'Jev on: every finished line is judged "said to the bot? a joke or a real request?" ({model}).',
 	jev_banter: 'That last line was banter, a wind-up, not a real request: "{line}". Do not take it seriously; stay in character.',
-	jev_not_addressed: 'That last line was not said to you; people are talking among themselves: "{line}". Do not chip in.',
+	jev_not_addressed: 'That last line was not said to you ("{line}"): it was for somebody else, or people talking among themselves. Your reply was not played; do not answer it or chip in.',
+	log_reply_suppressed: '[jev] reply kept off the channel, the line was not for the bot ({addressed}%): "{line}"',
+	log_local_not_addressed: '[jev] local: no reply, the line was not for the bot ({addressed}%): "{line}"',
 	speaker_correction: 'Correction: the person who said "{line}" a moment ago is {name}{owner}.',
 	log_context_correction: '[context] correction: "{line}" -> {name}',
 	command_error: 'Command error: {error}',

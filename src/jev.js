@@ -59,24 +59,30 @@ export function createJev(cfg, { log = () => {}, client = null } = {}) {
 		 * @returns {Promise<{ addressed: number, kind: string, kindP: number, confidence: number }|null>}
 		 *   addressed = probability the line was said to the bot; kind = command | question | banter | chat
 		 */
-		async judge({ line, speaker, botName, ownerSpeaking = false, recent = '' }) {
+		async judge({ line, speaker, botName, ownerSpeaking = false, recent = '', people = [], assistantLastLine = '' }) {
 			const answers = await run(
 				{
 					line: String(line ?? ''),
 					speaker: String(speaker ?? ''),
 					assistant: String(botName ?? 'bot'),
 					speaker_is_owner: Boolean(ownerSpeaking),
+					// Measured: without the room, "Adem naber" from the only person present is a coin toss (0.50);
+					// with it, 0.18, and 0.06 once the bot's own "sen naber?" is there to be answered.
+					people_in_voice_channel: [...people.map((name) => String(name)), `${String(botName ?? 'bot')} (assistant)`],
+					assistant_last_line: String(assistantLastLine ?? '').slice(-200),
 					recent_lines: String(recent ?? '').slice(-RECENT_CHARS),
 				},
 				{
 					addressed: {
 						type: 'noul',
 						instructions:
-							'Is `line` said TO the assistant named `assistant`, rather than to another person in the voice channel? '
-							+ 'The assistant is a member of the channel with a persona; people also talk among themselves.',
+							'Is `line` said TO the assistant named `assistant`, rather than to another person -- present in '
+							+ '`people_in_voice_channel` or elsewhere (on the phone, in text chat)? A line that calls somebody by a name '
+							+ 'other than the assistant is for that person, even when the speaker is the only person in the channel. '
+							+ 'A short reply to what the assistant just said (`assistant_last_line`) is for the assistant.',
 						criteria: {
-							true: 'The line is aimed at the assistant: it names it, answers it, or asks or tells it something.',
-							false: 'The line is aimed at another person, or is people talking among themselves.',
+							true: 'Aimed at the assistant: names it, answers it, or asks or tells it something.',
+							false: 'Aimed at somebody else (named or not), people talking among themselves, or talking to somebody outside the channel.',
 						},
 					},
 					kind: {

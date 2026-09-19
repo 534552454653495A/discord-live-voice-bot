@@ -156,6 +156,8 @@ export function loadConfig(env = process.env) {
 		jev: bool(env.JEV, true),
 		jevApiKey: str(env.JEV_API_KEY),
 		jevModel: str(env.JEV_MODEL, 'jev-latest'),
+		// With Jev: a reply to a line that was not for the bot is kept off the channel (see GuildSession.judgeEarly).
+		jevReplyGate: bool(env.JEV_REPLY_GATE, true),
 		leaveDelayMs: num(env.LEAVE_DELAY_MS, 2500, { min: 0 }),
 		respondToDms: bool(env.RESPOND_DMS, true),
 		respondToMentions: bool(env.RESPOND_MENTIONS, true),

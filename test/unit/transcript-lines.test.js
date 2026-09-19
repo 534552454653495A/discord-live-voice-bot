@@ -556,3 +556,114 @@ describe('a transcript whose clock has run ahead of the audio', () => {
 		assert.ok(!room.lines().some((line) => /anlaşılmıyor|does not say who/.test(line)), room.lines().join(' | '));
 	});
 });
+
+describe('the reply gate: a line that was not for the bot gets no reply on the channel', () => {
+	// Live failure: the owner, alone in the channel with the bot, said "Adem naber" -- to Adem, who was
+	// not there -- and the bot answered "valla bilmiyorum canım", then "o cevap versin o zaman". Telling
+	// the model afterwards changes nothing: it answers about a second after the person stops. So the line
+	// is judged the moment its pieces stop arriving, the bot's audio is held while Jev answers, and a
+	// reply to a line that was not for the bot never reaches the channel.
+	const loud = () => Buffer.from(new Int16Array(480).fill(3000).buffer);
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+	const gated = (verdict) => {
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		const pushed = [];
+		room.session.playback = { push: (samples) => pushed.push(samples.length), clear() {} };
+		const asked = [];
+		room.session.jev = { enabled: true, model: 'fake', judge: (input) => (asked.push(input), verdict(input)) };
+		return { room, pushed, asked };
+	};
+
+	it('holds the reply while Jev answers, then keeps it off the channel and tells the model', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const { room, pushed, asked } = gated(async () => ({ addressed: 0.1, kind: 'chat', kindP: 0.8, confidence: 0.8 }));
+		room.voices('guest', 40);
+		room.delta('adem naber', 0, 800);
+		t.mock.timers.tick(300); // the pieces stopped: judged now, not when the line closes
+		assert.equal(asked.length, 1);
+		assert.equal(asked[0].line, 'adem naber');
+		room.session.onAssistantAudio(loud()); // the model starts answering before the verdict is in
+		assert.deepEqual(pushed, [], 'held, not played');
+		await settle(); // the verdict: not for the bot
+		assert.deepEqual(pushed, [], 'dropped');
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [], 'and the rest of that reply too');
+		assert.match(room.lines().join(' '), /söylenmedi|not said to you/, 'the model is told its reply was not played');
+		assert.ok(room.logged.some((line) => /kanala verilmedi|kept off the channel/.test(line)), room.logged.join(' | '));
+
+		room.session.onTranscript({ speaker: 'assistant', text: 'valla bilmiyorum', startMs: 900, endMs: 1500 });
+		t.mock.timers.tick(1300); // closes both lines
+		assert.equal(asked.length, 1, 'the closed line is not judged a second time');
+		const out = room.activity.events.find((event) => event.kind === 'voice' && event.direction === 'out');
+		assert.equal(out?.meta?.suppressed, true, 'the reply is on the record as one nobody heard');
+		assert.equal(room.session.lastHeardAssistantLine, '', 'and is not what the bot "last said"');
+	});
+
+	it('lets a reply to a line that was for the bot out, in order, once the verdict is in', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const { room, pushed } = gated(async () => ({ addressed: 0.9, kind: 'question', kindP: 0.8, confidence: 0.8 }));
+		room.voices('guest', 40);
+		room.delta('bugun hava nasil', 0, 800);
+		t.mock.timers.tick(300);
+		room.session.onAssistantAudio(Buffer.from(new Int16Array(480).fill(3000).buffer));
+		room.session.onAssistantAudio(Buffer.from(new Int16Array(240).fill(3000).buffer));
+		assert.deepEqual(pushed, [], 'held');
+		await settle();
+		assert.deepEqual(pushed, [480, 240], 'released, in order');
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480, 240, 480], 'and the gate is open again');
+	});
+
+	it('never makes a line that names the bot wait', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const { room, pushed, asked } = gated(async () => ({ addressed: 0.1, kind: 'chat', kindP: 0.8, confidence: 0.8 }));
+		room.session.store = { getActive: () => ({ name: 'Melis' }), list: () => [], setActive: async () => true };
+		room.voices('guest', 40);
+		room.delta('melis naber', 0, 800);
+		t.mock.timers.tick(300);
+		assert.equal(asked.length, 0, 'the name is the answer');
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480]);
+	});
+
+	it('plays the reply anyway when Jev is too slow', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const { room, pushed } = gated(() => new Promise(() => {}));
+		room.voices('guest', 40);
+		room.delta('adem naber', 0, 800);
+		t.mock.timers.tick(300);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [], 'held');
+		t.mock.timers.tick(1500);
+		assert.deepEqual(pushed, [480], 'a slow Jev costs a moment, never the reply');
+	});
+
+	it('does nothing at all when the gate is switched off', async (t) => {
+		t.mock.timers.enable({ apis: ['setTimeout'] });
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0', JEV_REPLY_GATE: '0' });
+		const pushed = [];
+		room.session.playback = { push: (samples) => pushed.push(samples.length), clear() {} };
+		room.session.jev = { enabled: true, model: 'fake', judge: async () => ({ addressed: 0.1, kind: 'chat', kindP: 0.8, confidence: 0.8 }) };
+		room.voices('guest', 40);
+		room.delta('adem naber', 0, 800);
+		t.mock.timers.tick(300);
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480], 'not held');
+		await settle();
+		room.session.onAssistantAudio(loud());
+		assert.deepEqual(pushed, [480, 480], 'not kept off either; the model is only told');
+		assert.match(room.lines().join(' '), /söylenmedi|not said to you/);
+	});
+
+	it('local brain: a line that was not for the bot gets no reply, a line that names it always does', async () => {
+		const room = makeRoomSession({ OWNER_PRIORITY: '0', JEV: '0' });
+		const asked = [];
+		room.session.jev = { enabled: true, model: 'fake', judge: async (input) => (asked.push(input.line), { addressed: input.line.includes('adem') ? 0.1 : 0.9, kind: 'chat', kindP: 0.8, confidence: 0.8 }) };
+		room.session.store = { getActive: () => ({ name: 'Melis' }), list: () => [], setActive: async () => true };
+		assert.equal(await room.session.localLineForBot('adem naber', 'guest'), false);
+		assert.equal(await room.session.localLineForBot('bugun hava nasil', 'guest'), true);
+		assert.equal(await room.session.localLineForBot('melis naber', 'guest'), true);
+		assert.deepEqual(asked, ['adem naber', 'bugun hava nasil'], 'the name is never asked about');
+		assert.ok(room.logged.some((line) => /yerel: cevap yok|local: no reply/.test(line)));
+	});
+});

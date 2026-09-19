@@ -207,6 +207,9 @@ gone to the model under its speaker's name, so a slow or unavailable Jev costs n
 the verdict per line (`[jev] …`).
 The owner gate asks Jev too: when its keyword list does not recognise how the owner phrased a request, Jev is
 asked whether the owner's own words ask for that tool, and a clear yes opens the gate (who spoke stays the audio's call).
+With `JEV_REPLY_GATE=1` (the default) the line is judged the moment its pieces stop arriving, the reply is held for up to
+1.5 s while Jev answers, and a reply to a line that was not for the bot is kept off the channel; a line that names the bot
+never waits, and a slow Jev costs a moment, never the reply.
 
 ## Admin panel
 
