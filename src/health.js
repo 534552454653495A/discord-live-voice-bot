@@ -1,0 +1,192 @@
+// The session's own account of how it is doing, so that a problem is read off a few lines instead of
+// seven hundred: every fragment's confidence, every line's owner, every gate decision with its reason,
+// every Jev verdict and how long it took, how far the transcript's clock has run, and which tools are
+// slow. Nine minutes of a session went by with every line nobody's before anybody could see it in the
+// log; this says so at the second minute.
+import { t } from './i18n/index.js';
+
+const SLOW_TOOL_MS = 1500;
+// Above this the drift correction still works, but sending audio this far behind real time means the
+// send loop is being starved, and that is worth a warning of its own.
+const DRIFT_WARN_MS = 3000;
+// Lines nobody owns are normal in a tangle of voices; this many of them means the audio is not under
+// the words at all.
+const UNKNOWN_WARN_PCT = 40;
+const UNKNOWN_WARN_MIN_LINES = 10;
+
+const pct = (part, total) => (total ? Math.round((part / total) * 100) : 0);
+const median = (list) => {
+	if (!list.length) return 0;
+	const sorted = [...list].sort((a, b) => a - b);
+	return sorted[Math.floor(sorted.length / 2)];
+};
+
+export class SessionHealth {
+	constructor({ now = Date.now } = {}) {
+		this.now = now;
+		this.reset();
+	}
+
+	reset() {
+		this.since = this.now();
+		this.fragments = { sure: 0, leaning: 0, unsure: 0, silent: 0 };
+		this.lines = { named: 0, mixed: 0, unknown: 0 };
+		this.gate = { allowed: 0, denied: 0, reasons: new Map() };
+		this.jev = { calls: 0, failed: 0, banter: 0, notForBot: 0, suppressed: 0, ms: [] };
+		this.tools = new Map(); // name -> { count, slow, total }
+		this.drift = { now: 0, max: 0 };
+		this.reportedAt = 0; // how many fragments had been seen at the last report
+	}
+
+	get fragmentCount() {
+		return this.fragments.sure + this.fragments.leaning + this.fragments.unsure;
+	}
+
+	get lineCount() {
+		return this.lines.named + this.lines.mixed + this.lines.unknown;
+	}
+
+	/** One transcript fragment, as the audio placed it (the answer noteTranscript handed back). */
+	fragment(hit) {
+		const confidence = hit?.confidence;
+		if (confidence === 'sure') this.fragments.sure++;
+		else if (confidence === 'leaning') this.fragments.leaning++;
+		else this.fragments.unsure++;
+		if (!hit || hit.reason === 'silence') this.fragments.silent++;
+	}
+
+	/** One finished line. */
+	line({ id, mixed }) {
+		if (!id) this.lines.unknown++;
+		else if (mixed) this.lines.mixed++;
+		else this.lines.named++;
+	}
+
+	/** One owner-gate decision. */
+	gateResult(result, reason = null) {
+		if (result === 'allowed') {
+			this.gate.allowed++;
+			return;
+		}
+		if (result !== 'denied') return;
+		this.gate.denied++;
+		if (reason) this.gate.reasons.set(reason, (this.gate.reasons.get(reason) ?? 0) + 1);
+	}
+
+	/** One Jev round trip; `hit` is null when it failed or was skipped. */
+	jevVerdict(hit, ms, { notForBot = false, banter = false } = {}) {
+		this.jev.calls++;
+		if (Number.isFinite(ms)) this.jev.ms.push(ms);
+		if (!hit) {
+			this.jev.failed++;
+			return;
+		}
+		if (banter) this.jev.banter++;
+		if (notForBot) this.jev.notForBot++;
+	}
+
+	/** A reply kept off the channel because its line was not for the bot. */
+	jevSuppressed() {
+		this.jev.suppressed++;
+	}
+
+	/** One tool call. */
+	tool(name, ms) {
+		const entry = this.tools.get(name) ?? { count: 0, slow: 0, total: 0 };
+		entry.count++;
+		if (Number.isFinite(ms)) {
+			entry.total += ms;
+			if (ms > SLOW_TOOL_MS) entry.slow++;
+		}
+		this.tools.set(name, entry);
+	}
+
+	/** The transcript's clock against ours, as last measured. */
+	driftNow(ms) {
+		if (!Number.isFinite(ms)) return;
+		this.drift.now = ms;
+		if (ms > this.drift.max) this.drift.max = ms;
+	}
+
+	/** The numbers, for the panel and for tests. */
+	snapshot() {
+		const fragments = this.fragmentCount;
+		const lines = this.lineCount;
+		const slowTools = [...this.tools.entries()]
+			.filter(([, entry]) => entry.slow > 0)
+			.map(([name, entry]) => ({ name, count: entry.count, slow: entry.slow, avgMs: Math.round(entry.total / entry.count) }))
+			.sort((a, b) => b.avgMs - a.avgMs);
+		return {
+			minutes: Math.round((this.now() - this.since) / 60_000),
+			fragments,
+			surePct: pct(this.fragments.sure, fragments),
+			leaningPct: pct(this.fragments.leaning, fragments),
+			unsurePct: pct(this.fragments.unsure, fragments),
+			silentPct: pct(this.fragments.silent, fragments),
+			lines,
+			namedPct: pct(this.lines.named, lines),
+			mixedPct: pct(this.lines.mixed, lines),
+			unknownPct: pct(this.lines.unknown, lines),
+			driftMs: Math.round(this.drift.now),
+			driftMaxMs: Math.round(this.drift.max),
+			gateAllowed: this.gate.allowed,
+			gateDenied: this.gate.denied,
+			gateReasons: [...this.gate.reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+			jevCalls: this.jev.calls,
+			jevFailed: this.jev.failed,
+			jevMedianMs: Math.round(median(this.jev.ms)),
+			jevBanter: this.jev.banter,
+			jevNotForBot: this.jev.notForBot,
+			jevSuppressed: this.jev.suppressed,
+			slowTools,
+		};
+	}
+
+	/**
+	 * The report, as lines of text in the active locale: the numbers, then the warnings that are worth
+	 * one line each. `latency` is the response latency summary the session already keeps.
+	 */
+	report({ why = '', latency = '' } = {}) {
+		const s = this.snapshot();
+		const lines = [
+			t('runtime.health_summary', {
+				why,
+				minutes: s.minutes,
+				fragments: s.fragments,
+				sure: s.surePct,
+				leaning: s.leaningPct,
+				unsure: s.unsurePct,
+				silent: s.silentPct,
+				lines: s.lines,
+				named: s.namedPct,
+				mixed: s.mixedPct,
+				unknown: s.unknownPct,
+				drift: s.driftMs,
+				driftMax: s.driftMaxMs,
+			}),
+		];
+		if (s.gateAllowed || s.gateDenied) {
+			const list = s.gateReasons.map((entry) => `${entry.reason} ×${entry.count}`).join(', ');
+			lines.push(t('runtime.health_gate', { allowed: s.gateAllowed, denied: s.gateDenied, reasons: list ? t('runtime.health_gate_reasons', { list }) : '' }));
+		}
+		if (s.jevCalls) {
+			lines.push(
+				t('runtime.health_jev', {
+					calls: s.jevCalls,
+					ms: s.jevMedianMs,
+					banter: s.jevBanter,
+					notForBot: s.jevNotForBot,
+					suppressed: s.jevSuppressed,
+					failed: s.jevFailed,
+				}),
+			);
+		}
+		const tools = s.slowTools.length
+			? s.slowTools.map((entry) => t('runtime.health_tool_item', { name: entry.name, count: entry.count, seconds: (entry.avgMs / 1000).toFixed(1) })).join(', ')
+			: t('runtime.health_none');
+		lines.push(t('runtime.health_latency', { latency: latency || t('runtime.health_none'), tools }));
+		if (s.driftMs > DRIFT_WARN_MS) lines.push(t('runtime.health_warn_drift', { drift: s.driftMs }));
+		if (s.lines >= UNKNOWN_WARN_MIN_LINES && s.unknownPct > UNKNOWN_WARN_PCT) lines.push(t('runtime.health_warn_unknown', { unknown: s.unknownPct }));
+		return lines;
+	}
+}

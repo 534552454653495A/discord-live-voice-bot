@@ -31,6 +31,8 @@ import { normalize, parseBool, stripDictationTail, stripSpokenPrefix } from './t
 import { callTool, toolDefinitions, toolOutput } from './tools.js';
 import { VoiceSession } from './voice.js';
 import { toolDescription } from './tools/index.js';
+import { SessionHealth } from './health.js';
+import { SessionTrace } from './trace.js';
 
 // Retry schedule (ms) for rejoining after the voice connection drops; the rest are skipped once one works.
 const RECOVERY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
@@ -113,6 +115,9 @@ const JEV_MIN_CHARS = 4;
 const JEV_SETTLE_MS = 300;
 const REPLY_HOLD_MAX_MS = 1500;
 const REPLY_SUPPRESS_MS = 4000;
+// The session's own report on itself: every few minutes, once enough has happened to say anything.
+const HEALTH_EVERY_MS = 300_000;
+const HEALTH_MIN_FRAGMENTS = 20;
 // How many failures on one open session, inside this window, mean the session is no longer usable.
 const LIVE_ERROR_LIMIT = 3;
 const LIVE_ERROR_WINDOW_MS = 60_000; // a silent frame gap of up to 300 ms (packet jitter, a breath) does not reset the counter
@@ -220,6 +225,12 @@ export class GuildSession {
 		this.idle = new IdleGovernor({ idleMs: cfg.idleCloseMs });
 		this.attribution = new SpeakerAttribution({ ownerId: cfg.ownerId, frameMs: FRAME_MS });
 		this.latency = new LatencyMeter();
+		// What the session knows about itself (reportHealth), and, with TRACE=1, the flight recorder.
+		this.health = new SessionHealth();
+		this.healthTimer = setInterval(() => this.reportHealth(t('runtime.health_why_periodic', { minutes: HEALTH_EVERY_MS / 60_000 })), HEALTH_EVERY_MS);
+		this.healthTimer.unref?.();
+		this.trace = cfg.trace ? new SessionTrace({ dir: 'data/traces', text: cfg.recordTranscripts !== false, owner: cfg.ownerId ?? null, log: (line) => this.log(line) }) : null;
+		if (this.trace) this.log(t('runtime.log_trace_started', { file: this.trace.file }));
 		this.memberIndex = new MemberIndex();
 
 		// ---------------------------------------------------------------- music
@@ -375,6 +386,7 @@ export class GuildSession {
 			debug: this.cfg.debug,
 			soloUserId: this.cfg.soloUserId,
 			onFrame: (frame) => {
+				this.trace?.frame(frame, this.attribution.audioMs);
 				this.attribution.onFrame(frame);
 				this.trackSentSpeaker(frame);
 				if (this.cfg.debug) this.logSpeaking(frame.active);
@@ -507,7 +519,14 @@ export class GuildSession {
 			get jev() {
 				return session.jev;
 			},
-			activity: (event) => session.activity.push(event),
+			activity: (event) => {
+				// The gate's decisions are counted for the health report and kept by the recorder.
+				if (event?.kind === 'gate') {
+					session.health.gateResult(event.meta?.result, event.meta?.reason ?? null);
+					session.trace?.gate(event);
+				}
+				session.activity.push(event);
+			},
 			reminders: session.reminders,
 			savedTracks: session.savedTracks,
 			setDefaultVoice: (voiceName) => {
@@ -641,6 +660,7 @@ export class GuildSession {
 	/** Writes a tool event to the panel/log (the GPT-Live backend and the local brain share this path). */
 	onToolEvent({ name, args, output, ms }, source = 'backend') {
 		this.latency.toolDone(ms);
+		this.health.tool(name, ms);
 		let ok = true;
 		try {
 			ok = JSON.parse(output).ok !== false;
@@ -1074,6 +1094,7 @@ export class GuildSession {
 			for (const key of this.transcriptBuffers.keys()) this.flushTranscript(key);
 			this.transcriptBuffers.clear();
 			this.attribution.resetSession(); // in a new session the audio position starts from 0
+			this.trace?.session(this.live?.sessionId ?? null);
 			this.activity.push({ kind: 'session', text: t('runtime.live_session_open', { sessionId: sessionId ?? '?' }), meta: { sessionId } });
 			this.log(
 				t('runtime.live_ready', {
@@ -1186,6 +1207,7 @@ export class GuildSession {
 		session.on('closed', ({ code, reason, expected }) => {
 			if (this.live !== session) return;
 			this.live = null;
+			this.reportHealth(t('runtime.health_why_closed'));
 			if (expected || this.shuttingDown || this.paused) return;
 			this.scheduleLiveRetry(t('runtime.retry_why_closed', { detail: `${code}${reason ? ` ${reason}` : ''}` }), this.lastLiveError);
 			this.lastLiveError = null;
@@ -1345,7 +1367,11 @@ export class GuildSession {
 		// no audio at all and every line is nobody's. The offset is measured from the fragments themselves
 		// and taken off before anything is looked up.
 		let drift = 0;
+		let rawStart = null;
+		let rawEnd = null;
 		if (speaker === 'user') {
+			rawStart = startMs;
+			rawEnd = endMs;
 			drift = this.attribution.observeTranscript(endMs);
 			startMs = this.attribution.mapTranscriptMs(startMs);
 			endMs = this.attribution.mapTranscriptMs(endMs);
@@ -1373,6 +1399,9 @@ export class GuildSession {
 			// the model's context and for the run. Resolving it again downstream is how two parts of the code
 			// ended up naming two different people for the same words.
 			const hit = this.attribution.noteTranscript(text, { startMs: from, endMs });
+			this.health.fragment(hit);
+			this.health.driftNow(drift);
+			this.trace?.delta({ audio: this.attribution.audioMs, rawStart, rawEnd, start: from, end: endMs, drift, text, hit });
 			this.lastUserDeltaAt = Date.now();
 			// The reply gate asks its question as soon as the pieces stop for a moment (see judgeEarly).
 			if (this.earlyJudgeTimer) clearTimeout(this.earlyJudgeTimer);
@@ -1482,6 +1511,7 @@ export class GuildSession {
 			if (this.localMode) this.enqueueLocalSpeech(fresh);
 			else this.record({ kind: 'voice', direction: 'out', whoName: this.persona().name ?? 'bot', text: fresh, meta: suppressed ? { suppressed: true } : undefined });
 			if (!suppressed) this.lastHeardAssistantLine = fresh;
+			this.trace?.assistant(fresh, suppressed);
 			return;
 		}
 
@@ -1511,6 +1541,8 @@ export class GuildSession {
 				text: item.line,
 				meta: item.id && !item.mixed ? undefined : { unclear: true, speakers: item.candidates },
 			});
+			this.health.line(item);
+			this.trace?.line(item);
 			if (cfg.announceSpeaker && this.live?.ready) this.announceLine(item);
 			this.judgeLine(item);
 		}
@@ -1898,6 +1930,21 @@ export class GuildSession {
 	}
 
 	/**
+	 * The session's own account of how it is doing, on a few lines: every few minutes, when the live
+	 * session closes, and when the session stops. What the last few hundred lines of a pasted log used
+	 * to be read for -- the drift, the share of fragments the audio could place, the lines nobody owned,
+	 * the gate's refusals and their reasons, Jev's verdicts and latency, the slow tools -- said by the
+	 * bot itself, before anybody has to ask. Nothing is said until enough has happened to mean anything.
+	 */
+	reportHealth(why) {
+		if (this.health.fragmentCount - this.health.reportedAt < HEALTH_MIN_FRAGMENTS) return;
+		this.health.reportedAt = this.health.fragmentCount;
+		const lines = this.health.report({ why, latency: this.latency.summary().text });
+		for (const line of lines) this.log(line);
+		this.activity.push({ kind: 'health', whoName: this.persona().name ?? 'bot', text: lines.join('\n'), meta: this.health.snapshot() });
+	}
+
+	/**
 	 * Ask Jev what a finished line IS, and tell the model only when the answer changes how it should
 	 * treat the line. Non-blocking: the line has already gone to the model under its speaker's name; a
 	 * second short context line follows when Jev says it was banter, or was not said to the bot at all.
@@ -1913,9 +1960,10 @@ export class GuildSession {
 			if (!early.pending) this.earlyJudge = null;
 			return;
 		}
+		const askedAt = Date.now();
 		void this.jev
 			.judge(this.judgeInput(item.line, item.id))
-			.then((hit) => this.applyVerdict(hit, { text: item.line, id: item.id }))
+			.then((hit) => this.applyVerdict(hit, { text: item.line, id: item.id, ms: Date.now() - askedAt }))
 			.catch(() => {});
 	}
 
@@ -1946,12 +1994,13 @@ export class GuildSession {
 		const judge = { text, id, pending: true, flushed: false, verdict: null };
 		this.earlyJudge = judge;
 		this.holdReply();
+		const askedAt = Date.now();
 		void this.jev
 			.judge(this.judgeInput(text, id))
 			.then((hit) => {
 				judge.pending = false;
 				judge.verdict = hit;
-				if (this.earlyJudge === judge) this.applyVerdict(hit, { text, id });
+				if (this.earlyJudge === judge) this.applyVerdict(hit, { text, id, ms: Date.now() - askedAt });
 				else this.releaseReplyHold();
 			})
 			.catch(() => this.releaseReplyHold());
@@ -1975,7 +2024,11 @@ export class GuildSession {
 	 * off the channel until it ends, and the model is told its answer was not played. Banter: the model
 	 * is told so. Anything else: the held audio goes out as if nothing had happened.
 	 */
-	applyVerdict(hit, { text, id }) {
+	applyVerdict(hit, { text, id, ms = null }) {
+		const notForBot = Boolean(hit) && hit.addressed <= JEV_NOT_ADDRESSED_P;
+		const banter = Boolean(hit) && hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P;
+		this.health.jevVerdict(hit, ms, { notForBot, banter });
+		this.trace?.jev({ text, id, ms, hit, notForBot, banter });
 		if (!hit) {
 			this.releaseReplyHold();
 			return;
@@ -1993,7 +2046,7 @@ export class GuildSession {
 			);
 		}
 		const clipped = safeContext(text).slice(0, 120);
-		if (hit.addressed <= JEV_NOT_ADDRESSED_P) {
+		if (notForBot) {
 			this.dropReplyHold();
 			if (this.cfg.jevReplyGate) {
 				// A reply already under way is cut at its next pause; one that has not started yet is dropped
@@ -2002,13 +2055,14 @@ export class GuildSession {
 				const inProgress = now - this.lastAssistantSpokeAt <= SILENCE_GAP_MS;
 				this.suppress = { until: now + REPLY_SUPPRESS_MS, started: inProgress, lastLoud: this.lastAssistantSpokeAt, line: text };
 				if (inProgress) this.lastSuppressedAt = now;
+				this.health.jevSuppressed();
 			}
 			this.log(t('runtime.log_reply_suppressed', { addressed: Math.round(hit.addressed * 100), line: text.slice(0, 40) }));
 			if (this.live?.ready) this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
 			return;
 		}
 		this.releaseReplyHold();
-		if (hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P && this.live?.ready) {
+		if (banter && this.live?.ready) {
 			this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
 		}
 	}
@@ -2108,7 +2162,9 @@ export class GuildSession {
 		if (!this.jev?.enabled || this.cfg.localBrainRespond !== 'auto') return true;
 		const tokens = normalize(line).split(' ').filter(Boolean);
 		if (tokens.some((token) => this.wakeWordSet().has(token))) return true;
+		const askedAt = Date.now();
 		const hit = await this.jev.judge(this.judgeInput(line, userId));
+		this.health.jevVerdict(hit, Date.now() - askedAt, { notForBot: Boolean(hit) && hit.addressed <= JEV_NOT_ADDRESSED_P, banter: false });
 		if (!hit) return true;
 		if (this.cfg.debug) {
 			this.log(
@@ -2394,6 +2450,10 @@ export class GuildSession {
 		// A line that was still being said belongs in the record; a pending flush timer does not outlive
 		// the session that armed it.
 		for (const key of this.transcriptBuffers.keys()) this.flushTranscript(key);
+		this.reportHealth(t('runtime.health_why_stop'));
+		if (this.healthTimer) clearInterval(this.healthTimer);
+		this.healthTimer = null;
+		void this.trace?.close();
 		this.transcriptBuffers.clear();
 		if (this.liveReconnectTimer) clearTimeout(this.liveReconnectTimer);
 		this.liveReconnectTimer = null;

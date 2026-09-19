@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] — 2026-09-19
+
+### Added
+
+- **The session reports on itself.** Every five minutes, when a live session closes and when the bot stops,
+  a few log lines (and one panel event) say how it is doing: how far the transcript's clock has drifted, how
+  many fragments the audio could place, how many lines belonged to nobody, what the owner gate refused and
+  why, what Jev decided and how fast, which tools are slow — with a warning when the drift is large or most
+  lines are nobody's. Nine minutes of one session went by blind before anybody could see it in seven hundred
+  lines of log; this says so at the second minute.
+- **A flight recorder, and a replay.** `TRACE=1` keeps the material the decisions are made from — who the
+  mixer heard on each frame, where the transcript put every fragment, every decision as it was taken — in
+  `data/traces/`, without audio and without words unless transcripts may be recorded.
+  `node scripts/replay-trace.mjs <file>` runs the attribution as it is now over a trace and lists what it
+  decides differently: a live failure becomes a test, and a change is judged against real rooms.
+- **A cap on Jev requests per session** (`JEV_MAX_CALLS`, 3000): past it Jev goes quiet, says so once, and
+  everything works as it does without Jev.
+
+### Changed
+
+- **The README describes the bot as it is**: who-said-what, the reply gate, the three uses of Jev, the
+  self-diagnosis and the recorder, and the new settings.
+
 ## [1.27.0] — 2026-09-19
 
 ### Added

@@ -158,6 +158,10 @@ export function loadConfig(env = process.env) {
 		jevModel: str(env.JEV_MODEL, 'jev-latest'),
 		// With Jev: a reply to a line that was not for the bot is kept off the channel (see GuildSession.judgeEarly).
 		jevReplyGate: bool(env.JEV_REPLY_GATE, true),
+		// Requests per session before Jev goes quiet; 0 = no cap.
+		jevMaxCalls: num(env.JEV_MAX_CALLS, 3000, { min: 0 }),
+		// The flight recorder: frames, fragments and decisions to data/traces/, for scripts/replay-trace.mjs.
+		trace: bool(env.TRACE, false),
 		leaveDelayMs: num(env.LEAVE_DELAY_MS, 2500, { min: 0 }),
 		respondToDms: bool(env.RESPOND_DMS, true),
 		respondToMentions: bool(env.RESPOND_MENTIONS, true),

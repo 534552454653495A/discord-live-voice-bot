@@ -24,11 +24,19 @@ destructive action is locked behind a voice-based owner gate that proves *who ac
   the music drops while the bot speaks and comes back when it stops.
 - **Per-person memory.** "Remember that my cat is called Smoke" is stored per user and quietly handed to
   the model the next time that person speaks.
-- **Knows who is talking.** The owner's voice is given priority on the audio path, and the assistant is
-  told the name of whoever it is currently hearing.
+- **Knows who is talking.** The owner's voice is given priority on the audio path; every transcript
+  fragment is placed against a per-person record of who was audible when, so each line reaches the model
+  under its speaker's name and admin commands are tied to the owner's own voice.
+- **Knows what is for it.** With a Jev key, every line is judged the moment it settles — *said to the bot?
+  a request, a question, banter, or people talking among themselves?* — and a reply to a line that was not
+  for the bot never reaches the channel.
 - **Offline fallback ("local brain").** If the realtime API is out of credit or unreachable, the bot can
   keep talking using local Whisper for ears, any chat model for the brain, and Chatterbox for the voice.
 - **Local admin panel** on `127.0.0.1:8787` with a live activity log, `/healthz` and Prometheus `/metrics`.
+- **Reports on itself.** Every five minutes and when a session closes, the bot says how it is doing: how
+  far the transcript's clock has drifted, how many fragments the audio could place, how many lines belonged
+  to nobody, what the owner gate refused and why, what Jev decided, which tools are slow. With `TRACE=1`
+  a flight recorder keeps the material those decisions were made from, and a script replays it.
 - **Several servers at once.** Each one gets its own conversation, model session, audio path and music,
   and the owner gate is per server.
 - **English and Turkish.** Every user-visible string lives in `src/locales/`; `BOT_LANGUAGE` picks one.
@@ -60,6 +68,21 @@ Discord voice  ◀──Opus──  encode  ◀── PlaybackQueue ◀───
 
 The bot never sends audio through ffmpeg on the voice path — resampling and mixing are small integer
 routines in `src/audio.js`, which is what keeps the loop inside one 20 ms frame.
+
+**Who said what.** The model hears one mixed stream, so it cannot tell voices apart; the bot can. The mixer
+notes, per 20 ms frame, who was audible (`SpeakerAttribution`), and every transcript fragment the model
+sends back is placed against that record by its position in the audio. A line is one person's when the
+audio under it was theirs alone for most of it; a fragment that lands in the pause between two of somebody's
+words is theirs; two voices at once name nobody, and the model is told so rather than guessed for. Two
+things the transcript does that the code has to undo: a word can arrive in pieces ("edebilirs" then "in"),
+and the transcript's clock runs ahead of the audio by about 1.3% — a fragment's end can never be later than
+the audio the far end has, so the largest "end minus our position" over the last thirty seconds is the offset,
+measured continuously and taken off every position before it is looked up.
+
+**The reply.** The realtime model starts answering on its own about a second after a person stops. With Jev
+(below) the line is judged as soon as its pieces stop arriving; if the bot has not started speaking yet its
+audio is held for up to 1.5 s, and a reply to a line that was not for the bot is dropped and kept off the
+channel until it ends, with the model told its answer was not played. A line that names the bot never waits.
 
 **The owner gate.** Voice is not an identity: anyone can say "ban him". The gate answers a narrower
 question — *who said the command word?* Transcript fragments are attributed to a speaker by their
@@ -196,20 +219,42 @@ tools\run-chatterbox.cmd
 
 Voice commands, tools and the owner gate all work in this mode. Web search does not.
 
-## Jev judgments
+## Judgments (Jev)
 
-With `JEV_API_KEY` set, every finished line is sent to [Jev](https://typesafe.ai) (TypeSafe's System One
-model) with two typed questions: *was this said to the bot?* and *is it a request, a question, banter, or
-people talking among themselves?* The answers come back as probabilities and the code, not the model,
-decides what to do with them: when a line was banter (an absurd "order" between friends) or was not for
-the bot at all, the realtime model is told so in a second short context line. The line itself has already
-gone to the model under its speaker's name, so a slow or unavailable Jev costs nothing. `DEBUG=1` prints
-the verdict per line (`[jev] …`).
-The owner gate asks Jev too: when its keyword list does not recognise how the owner phrased a request, Jev is
-asked whether the owner's own words ask for that tool, and a clear yes opens the gate (who spoke stays the audio's call).
-With `JEV_REPLY_GATE=1` (the default) the line is judged the moment its pieces stop arriving, the reply is held for up to
-1.5 s while Jev answers, and a reply to a line that was not for the bot is kept off the channel; a line that names the bot
-never waits, and a slow Jev costs a moment, never the reply.
+With `JEV_API_KEY` set, [Jev](https://typesafe.ai) (TypeSafe's System One model) answers narrow, typed
+questions about what people say, as probabilities; the code decides what to do with them. Three uses:
+
+- **Was that for the bot?** Every line, judged the moment its pieces stop arriving, with the room in view:
+  who is in the channel and what the bot last said. Measured on real lines, "Adem naber" from the only
+  person present is 6% *for the bot* (50% without the room), "Melis naber" 96%, a reply to the bot's own
+  "sen naber?" 92%. Below 25% the reply is kept off the channel; banter above 70% is pointed out to the model.
+- **The owner gate's second opinion.** When the gate's keyword list does not recognise how the owner phrased
+  a request, Jev is asked whether the owner's own words ask for that tool, described as the model sees it; a
+  clear yes (80%) opens the gate. Who spoke stays the audio's call.
+- **The local brain.** Without a model listening for itself, the same question decides whether to answer.
+
+A slow Jev costs a moment, never a reply; after five failures in a row the session stops asking; `JEV_MAX_CALLS`
+caps requests per session; `JEV=0` turns it off, `JEV_REPLY_GATE=0` leaves only the advice to the model.
+`DEBUG=1` prints every verdict (`[jev] …`).
+
+## Self-diagnosis
+
+Every five minutes, when a live session closes and when the bot stops, the session reports on itself in a
+few log lines (and one panel event): the drift of the transcript's clock, the share of fragments the audio
+could place, the lines nobody owned, the gate's refusals with their reasons, Jev's verdicts and latency, the
+slow tools — with a warning when the drift is large or most lines belong to nobody.
+
+`TRACE=1` turns on the flight recorder: who the mixer heard on each frame (one record per change of
+voices), where the transcript put every fragment and where it was looked up, and every decision as it was
+taken, to `data/traces/<time>.jsonl`. No audio; words only when `RECORD_TRANSCRIPTS` allows. A trace
+replays through the attribution as it is now:
+
+```
+node scripts/replay-trace.mjs data/traces/<file>.jsonl
+```
+
+which lists every fragment decided differently from the live session — a live failure becomes a test, and a
+change to the attribution is judged against real rooms.
 
 ## Admin panel
 
@@ -241,6 +286,9 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | `BRAIN_MODE` | `auto` | `auto` falls back to the local brain, `local` always, `live` never |
 | `RECORD_TRANSCRIPTS` | `1` | Whether transcripts and message text are written to disk |
 | `JEV_API_KEY` | *(empty)* | Enables Jev line judgments: joke or request, said to the bot or not |
+| `JEV_REPLY_GATE` | `1` | Keep a reply off the channel when its line was not for the bot |
+| `JEV_MAX_CALLS` | `3000` | Jev requests per session before it goes quiet |
+| `TRACE` | `0` | The flight recorder, to `data/traces/` |
 
 ## Project layout
 
@@ -253,6 +301,9 @@ src/
   bridge.js       the 20 ms send/receive loop
   voice.js        voice connection, receivers, rejoin logic
   attribution.js  who said what (the basis of the owner gate)
+  runs.js         transcript pieces -> one line per speaker
+  jev.js          typed judgments (Jev)  health.js    the session's report on itself
+  trace.js        flight recorder + replay (scripts/replay-trace.mjs)
   commands.js     slash commands and spoken-command grammar
   music.js        yt-dlp + ffmpeg player with ducking
   localbrain.js   offline chat loop      localstt.js  offline ears

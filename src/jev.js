@@ -29,14 +29,27 @@ const RECENT_CHARS = 300;
  */
 export function createJev(cfg, { log = () => {}, client = null } = {}) {
 	const model = cfg.jevModel ?? 'jev-latest';
+	const maxCalls = Number.isFinite(cfg.jevMaxCalls) && cfg.jevMaxCalls > 0 ? cfg.jevMaxCalls : Infinity;
 	if (!cfg.jev || (!cfg.jevApiKey && !client)) return { enabled: false, model, judge: async () => null, asks: async () => null };
 	const api = client ?? new TypeSafeClient({ apiKey: cfg.jevApiKey, timeout: JEV_TIMEOUT_MS });
 	let failures = 0;
 	let inFlight = 0;
+	let calls = 0;
+	let capped = false;
 
 	/** One request; null when it could not be made or answered. Failures are counted here, once. */
 	async function run(state, questions) {
 		if (failures >= JEV_MAX_FAILURES || inFlight >= JEV_MAX_IN_FLIGHT) return null;
+		// A session that never ends must not cost a request per line for ever: past the cap Jev goes quiet
+		// and says so once, and everything falls back to the way it works without Jev.
+		if (calls >= maxCalls) {
+			if (!capped) {
+				capped = true;
+				log(t('runtime.log_jev_capped', { max: maxCalls }));
+			}
+			return null;
+		}
+		calls++;
 		inFlight++;
 		try {
 			const response = await api.systemOne({ model, state, questions });
@@ -55,6 +68,9 @@ export function createJev(cfg, { log = () => {}, client = null } = {}) {
 	return {
 		enabled: true,
 		model,
+		get calls() {
+			return calls;
+		},
 		/**
 		 * @returns {Promise<{ addressed: number, kind: string, kindP: number, confidence: number }|null>}
 		 *   addressed = probability the line was said to the bot; kind = command | question | banter | chat

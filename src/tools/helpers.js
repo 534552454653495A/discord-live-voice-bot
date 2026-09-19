@@ -592,7 +592,7 @@ export async function ownerGate(deps, keywords = null, tool = t('tools.helpers.g
 			kind: 'gate',
 			whoName: deps.personaName?.() ?? 'bot',
 			text: t('tools.helpers.gate_denied_activity', { tool, reason }),
-			meta: { tool, result: 'denied' },
+			meta: { tool, result: 'denied', reason },
 		});
 		return { ok: false, spoken, denied: true };
 	};
