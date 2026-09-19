@@ -24,7 +24,8 @@ destructive action is locked behind a voice-based owner gate that proves *who ac
   the music drops while the bot speaks and comes back when it stops.
 - **Per-person memory.** "Remember that my cat is called Smoke" is stored per user and quietly handed to
   the model the next time that person speaks.
-- **Knows who is talking.** The owner's voice is given priority on the audio path; every transcript
+- **Knows who is talking.** One voice at a time: while somebody holds the floor only their audio is sent,
+  the floor passes at a pause to whoever has waited longest, and the owner takes it at once. Every transcript
   fragment is placed against a per-person record of who was audible when, so each line reaches the model
   under its speaker's name and admin commands are tied to the owner's own voice.
 - **Knows what is for it.** With a Jev key, every line is judged the moment it settles — *said to the bot?
@@ -69,15 +70,21 @@ Discord voice  ◀──Opus──  encode  ◀── PlaybackQueue ◀───
 The bot never sends audio through ffmpeg on the voice path — resampling and mixing are small integer
 routines in `src/audio.js`, which is what keeps the loop inside one 20 ms frame.
 
-**Who said what.** The model hears one mixed stream, so it cannot tell voices apart; the bot can. The mixer
-notes, per 20 ms frame, who was audible (`SpeakerAttribution`), and every transcript fragment the model
-sends back is placed against that record by its position in the audio. A line is one person's when the
+**Who said what.** The model hears one stream and cannot tell voices apart; the bot can, and it makes
+sure there is only one voice to tell. *Floor control* (`FLOOR_CONTROL`, on by default): while somebody
+holds the floor only their audio is sent — the floor passes at their pause to whoever has been waiting
+longest, a monologue over eight seconds can be taken by somebody who has talked over it for a second and a
+half, and the owner takes it at once. What is lost is an interrupter's first seconds, which the model was
+not understanding as a sum anyway. The mixer notes, per 20 ms frame, who was sent and who was speaking
+over them (`SpeakerAttribution`), and every transcript fragment the model sends back is placed against that
+record by its position in the audio. A line is one person's when the
 audio under it was theirs alone for most of it; a fragment that lands in the pause between two of somebody's
 words is theirs; two voices at once name nobody, and the model is told so rather than guessed for. Two
 things the transcript does that the code has to undo: a word can arrive in pieces ("edebilirs" then "in"),
 and the transcript's clock runs ahead of the audio by about 1.3% — a fragment's end can never be later than
-the audio the far end has, so the largest "end minus our position" over the last thirty seconds is the offset,
-measured continuously and taken off every position before it is looked up.
+the audio the far end has, so "end minus our position" is the offset less the transcript's lag; the upper
+envelope of those samples — the largest per five seconds — is fitted with a line, which gives the offset at
+any moment, silence or not, and its rate, and it is taken off every position before it is looked up.
 
 **The reply.** The realtime model starts answering on its own about a second after a person stops. With Jev
 (below) the line is judged as soon as its pieces stop arriving; if the bot has not started speaking yet its
@@ -256,6 +263,22 @@ node scripts/replay-trace.mjs data/traces/<file>.jsonl
 which lists every fragment decided differently from the live session — a live failure becomes a test, and a
 change to the attribution is judged against real rooms.
 
+## Where it is going
+
+The core is a diarization problem solved without diarization: one mixed stream, a per-person record of who
+was audible, and positions on a clock that is not ours. The steps that raise it a level, in the order they
+are planned:
+
+- **Floor control** (done): send one voice, and the overlap that every downstream step is worst at is gone.
+- **Per-person adaptive voice detection**: energy in dB against a tracked noise floor per person, instead of
+  one absolute peak threshold for every microphone — a quiet speaker is a speaker, a fan is not.
+- **Fragment assignment as inference**: a sticky hidden-Markov path over a line's fragments instead of a
+  per-fragment vote, so a boundary fragment takes its speaker from its neighbours unless the audio says
+  otherwise.
+- **Reply control at the protocol** if the realtime API exposes it: the application starting the reply
+  after the verdict, instead of holding and dropping audio.
+- **The session module in pieces**: transcript pipeline, reply gate and speakers as their own modules.
+
 ## Admin panel
 
 `http://127.0.0.1:8787` — bound to loopback only, with a Host-header check against DNS rebinding.
@@ -280,6 +303,7 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | `MAX_LIVE_SESSIONS` | `2` | How many servers may hold an open realtime session at once |
 | `OWNER_ID` | *(empty)* | The only voice that may use admin tools; empty disables them |
 | `OWNER_PRIORITY` | `1` | While the owner speaks, only their audio is sent to the model |
+| `FLOOR_CONTROL` | `1` | One voice at a time: only the floor holder is sent to the model |
 | `RESEARCH_MODEL` | *(empty)* | Enables the full tool set and web search through the Responses API |
 | `DAILY_LIVE_SECONDS` | `0` | Daily realtime budget; `0` is unlimited |
 | `MUSIC_VOLUME` / `MUSIC_DUCK_VOLUME` | `35` / `12` | Music level, and level while the bot speaks |

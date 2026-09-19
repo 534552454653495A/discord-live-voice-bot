@@ -172,6 +172,16 @@ const FLOOR_JITTER_FRAMES = 5;
 // audio bar either, which is a fan or a keyboard. This is the level the barge-in check already uses
 // for "there is real sound here".
 const PRESENCE_PEAK = 200;
+// Floor control: one voice at a time. The model hears a SUM and cannot pull it apart, so two people at
+// once is the one thing every downstream step is worst at -- the transcript comes back garbled, the line
+// is nobody's, the gate refuses, the command is not run. The owner's priority path proves the cure: while
+// one voice is sent, everything about that stretch is exact. With floor control that is the rule for
+// everybody: the person holding the floor is the only one sent, the floor passes at their pause to
+// whoever has been waiting longest, and a monologue this long can be taken from them by somebody who has
+// been talking over it for this long. What is lost is the interrupter's first seconds, which the model
+// was not understanding anyway.
+const FLOOR_MAX_FRAMES = 400;
+const BARGE_FRAMES = 75;
 const LONG_AGO = -1e9;
 
 /**
@@ -195,7 +205,17 @@ export class SpeakerMixer {
 		holdFrames = SPEECH_HOLD_FRAMES,
 		floorHoldFrames = FLOOR_HOLD_FRAMES,
 		jitterFrames = FLOOR_JITTER_FRAMES,
+		floorControl = false,
+		floorMaxFrames = FLOOR_MAX_FRAMES,
+		bargeFrames = BARGE_FRAMES,
 	} = {}) {
+		this.floorControl = floorControl;
+		this.floorMaxFrames = floorMaxFrames;
+		this.bargeFrames = bargeFrames;
+		this.floorId = null; // who holds the floor under floor control (or the priority speaker)
+		this.floorSince = 0;
+		this.floorTakeovers = 0; // how often the floor was taken from somebody still speaking
+		this.frameBufs = new Map();
 		this.frameSamples = frameSamples;
 		this.bufferSamples = frameSamples * bufferFrames;
 		this.activityPeak = activityPeak;
@@ -225,7 +245,7 @@ export class SpeakerMixer {
 	_voice(id) {
 		let voice = this.voices.get(id);
 		if (!voice) {
-			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0 };
+			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false };
 			this.voices.set(id, voice);
 		}
 		return voice;
@@ -291,60 +311,92 @@ export class SpeakerMixer {
 		return peakOf(samples, count);
 	}
 
+	/** This speaker's own frame buffer, so that every ring can be read before anything is summed. */
+	_buf(id) {
+		let buf = this.frameBufs.get(id);
+		if (!buf) {
+			buf = new Int16Array(this.frameSamples);
+			this.frameBufs.set(id, buf);
+		}
+		return buf;
+	}
+
+	/** The floor changes hands. A takeover is the floor taken from somebody still speaking; a pause is not one. */
+	_takeFloor(id, takeover = false) {
+		if (this.floorId === id) return;
+		if (takeover) this.floorTakeovers++;
+		this.floorId = id;
+		this.floorSince = this.frames;
+	}
+
 	/**
-	 * Sums one 20 ms frame. Returns { pcm, active, priority } (active = peaks above threshold).
-	 * The returned `pcm` is a shared buffer: the next tick overwrites it, so the caller must consume it right away.
+	 * One 20 ms frame. Returns { pcm, active, present, priority, others }: active = who the frame's audio
+	 * belongs to, present = whose voice is in the sound, others = who was speaking but was NOT sent (floor
+	 * control). The returned `pcm` is a shared buffer: the next tick overwrites it, so the caller must
+	 * consume it right away.
 	 */
 	tick() {
 		const out = this.out;
 		out.fill(0);
 		this.frames++;
-		// Everybody whose voice is really in this frame, at a lower bar than "speaking". What goes out is
-		// the SUM of these, and the model cannot pull a sum apart, so this is the list that decides whether
-		// anybody's words can be said to be theirs alone.
-		const present = [];
-
-		// 1) If the priority speaker is talking, only their audio goes out.
-		if (this.priorityId) {
-			const ring = this.rings.get(this.priorityId);
-			const n = ring && ring.length > 0 ? ring.read(this.tmp, this.frameSamples) : 0;
-			const peak = n > 0 ? peakOf(this.tmp, n) : 0;
-			const voice = this._note(this.priorityId, peak);
-			if (this._holdsFloor(voice)) {
-				if (n > 0) out.set(this.tmp.subarray(0, n));
-				// Keep the other rings from piling up: their audio for this frame is discarded (it is not
-				// sent while the owner speaks anyway), otherwise 200 ms of stale audio arrives once the
-				// owner goes quiet. Their state is still noted, so that somebody who was mid-sentence does
-				// not come out of the pause looking like a brand new speaker.
-				for (const [id, other] of this.rings) {
-					if (id === this.priorityId) continue;
-					const m = other.length > 0 ? other.read(this.tmp, this.frameSamples) : 0;
-					this._note(id, m > 0 ? peakOf(this.tmp, m) : 0);
-				}
-				// Nobody else's samples reached `out`, so the frame really does hold one voice.
-				return { pcm: out, active: [this.priorityId], present: [this.priorityId], priority: true };
-			}
-			if (n > 0) this._addToOut(out, this.tmp, n); // the owner is quiet: fold them into the normal mix
-			if (peak > this.presencePeak) present.push(this.priorityId);
-		}
-
-		const heard = [];
+		// Every speaker's frame is read first, whatever is then done with it: who is speaking has to be
+		// known before anything is summed, and a ring that is not read piles up 200 ms of stale audio.
+		const frames = [];
 		for (const [id, ring] of this.rings) {
-			if (id === this.priorityId) continue;
-			const n = ring.length > 0 ? ring.read(this.tmp, this.frameSamples) : 0;
-			const peak = n > 0 ? this._addToOut(out, this.tmp, n) : 0;
+			const buf = this._buf(id);
+			const n = ring.length > 0 ? ring.read(buf, this.frameSamples) : 0;
+			const peak = n > 0 ? peakOf(buf, n) : 0;
 			const voice = this._note(id, peak);
-			if (peak > this.presencePeak) present.push(id);
-			if (this._speaking(voice)) heard.push({ id, energy: voice.energy });
+			const speaking = this._speaking(voice);
+			if (speaking && !voice.wasSpeaking) voice.runStart = this.frames; // the queue for the floor is by this
+			voice.wasSpeaking = speaking;
+			frames.push({ id, buf, n, peak, voice, speaking });
 		}
-		// The priority speaker can be mid-sentence without owning the floor (they went quiet for longer
-		// than the hold, so the room was given back): they are still one of the people speaking here, and
-		// the line still has to carry their name.
-		const priorityVoice = this.priorityId ? this.voices.get(this.priorityId) : null;
-		if (priorityVoice && this._speaking(priorityVoice)) heard.push({ id: this.priorityId, energy: priorityVoice.energy });
-		// Loudest person first: the "dominant speaker" (the speaking notification) is read from here.
+		const speakingBut = (holder) => frames.filter((f) => f.speaking && f.id !== holder).map((f) => f.id);
+
+		// 1) The priority speaker: while they talk only their audio goes out, at once, whoever else is
+		//    talking. Nobody else's samples reach `out`, so the frame really does hold one voice.
+		if (this.priorityId) {
+			const own = frames.find((f) => f.id === this.priorityId);
+			if (own && this._holdsFloor(own.voice)) {
+				if (own.n > 0) out.set(own.buf.subarray(0, own.n));
+				this._takeFloor(this.priorityId, speakingBut(this.priorityId).length > 0);
+				return { pcm: out, active: [this.priorityId], present: [this.priorityId], priority: true, others: speakingBut(this.priorityId) };
+			}
+		}
+
+		// 2) Floor control: one voice at a time. The holder keeps the floor while they are mid-sentence; at
+		//    their pause it goes to whoever has been speaking longest; a monologue past FLOOR_MAX_FRAMES can
+		//    be taken by somebody who has been talking over it for BARGE_FRAMES.
+		const speaking = frames.filter((f) => f.speaking).sort((a, b) => a.voice.runStart - b.voice.runStart || b.voice.energy - a.voice.energy);
+		if (this.floorControl && speaking.length) {
+			let holder = speaking.find((f) => f.id === this.floorId) ?? null;
+			let takeover = false;
+			if (holder && this.frames - this.floorSince >= this.floorMaxFrames) {
+				const barger = speaking.find((f) => f.id !== holder.id && this.frames - f.voice.runStart >= this.bargeFrames);
+				if (barger) {
+					holder = barger;
+					takeover = true;
+				}
+			}
+			if (!holder) holder = speaking[0];
+			this._takeFloor(holder.id, takeover);
+			if (holder.n > 0) out.set(holder.buf.subarray(0, holder.n));
+			return { pcm: out, active: [holder.id], present: [holder.id], priority: false, others: speakingBut(holder.id) };
+		}
+
+		// 3) Nobody is speaking (under floor control), or the plain sum: everybody's audio, loudest first.
+		//    Somebody murmuring under the speech bar is still in the sound and still listed as present.
+		this.floorId = null;
+		const present = [];
+		const heard = [];
+		for (const f of frames) {
+			if (f.n > 0) mixInto(out, f.buf, f.n, 1);
+			if (f.peak > this.presencePeak) present.push(f.id);
+			if (f.speaking) heard.push({ id: f.id, energy: f.voice.energy });
+		}
 		heard.sort((a, b) => b.energy - a.energy);
-		return { pcm: out, active: heard.map((entry) => entry.id), present, priority: false };
+		return { pcm: out, active: heard.map((entry) => entry.id), present, priority: false, others: [] };
 	}
 }
 

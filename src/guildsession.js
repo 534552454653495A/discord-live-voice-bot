@@ -219,7 +219,10 @@ export class GuildSession {
 		this.presenceEnabled = presenceEnabled;
 
 		// ---------------------------------------------------------------- audio path
-		this.mixer = new SpeakerMixer();
+		// One voice at a time (see SpeakerMixer): the model hears a sum and cannot pull it apart, so while
+		// somebody holds the floor only their audio goes out. FLOOR_CONTROL=0 sends the sum as before.
+		this.mixer = new SpeakerMixer({ floorControl: cfg.floorControl });
+		if (cfg.floorControl) this.log(t('runtime.floor_control_on'));
 		if (cfg.ownerPriority && cfg.ownerId) this.mixer.setPriority(cfg.ownerId);
 		this.playback = new PlaybackQueue();
 		this.idle = new IdleGovernor({ idleMs: cfg.idleCloseMs });
@@ -387,6 +390,7 @@ export class GuildSession {
 			soloUserId: this.cfg.soloUserId,
 			onFrame: (frame) => {
 				this.trace?.frame(frame, this.attribution.audioMs);
+				if (frame.others?.length) this.health.overlap(frame.others);
 				this.attribution.onFrame(frame);
 				this.trackSentSpeaker(frame);
 				if (this.cfg.debug) this.logSpeaking(frame.active);
@@ -1400,7 +1404,7 @@ export class GuildSession {
 			// ended up naming two different people for the same words.
 			const hit = this.attribution.noteTranscript(text, { startMs: from, endMs });
 			this.health.fragment(hit);
-			this.health.driftNow(drift);
+			this.health.driftNow(drift, this.attribution.driftRate);
 			this.trace?.delta({ audio: this.attribution.audioMs, rawStart, rawEnd, start: from, end: endMs, drift, text, hit });
 			this.lastUserDeltaAt = Date.now();
 			// The reply gate asks its question as soon as the pieces stop for a moment (see judgeEarly).
@@ -1939,7 +1943,7 @@ export class GuildSession {
 	reportHealth(why) {
 		if (this.health.fragmentCount - this.health.reportedAt < HEALTH_MIN_FRAGMENTS) return;
 		this.health.reportedAt = this.health.fragmentCount;
-		const lines = this.health.report({ why, latency: this.latency.summary().text });
+		const lines = this.health.report({ why, latency: this.latency.summary().text, takeovers: this.mixer?.floorTakeovers ?? 0 });
 		for (const line of lines) this.log(line);
 		this.activity.push({ kind: 'health', whoName: this.persona().name ?? 'bot', text: lines.join('\n'), meta: this.health.snapshot() });
 	}

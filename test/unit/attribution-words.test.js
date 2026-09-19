@@ -156,3 +156,19 @@ describe('the transcript s clock against ours', () => {
 		assert.equal(a.transcriptDrift, 0);
 	});
 });
+
+describe('the drift model', () => {
+	it('predicts the offset through a silence from the rate it measured', () => {
+		const a = new SpeakerAttribution({ ownerId: 'o' });
+		const rate = 0.013;
+		for (let k = 1; k <= 12; k++) {
+			ownerTalks(a, 250); // five seconds
+			const end = a.audioMs;
+			a.observeTranscript(end + Math.round(end * rate));
+		}
+		assert.ok(Math.abs(a.transcriptDrift - 780) < 60, `sixty seconds in: ${a.transcriptDrift}`);
+		assert.ok(Math.abs(a.driftRate - 13) < 3, `ms per second: ${a.driftRate}`);
+		for (let i = 0; i < 2000; i++) a.onFrame({ active: [], present: [], sent: true }); // forty seconds of nobody talking
+		assert.ok(Math.abs(a.transcriptDrift - 1300) < 100, `predicted at a hundred seconds: ${a.transcriptDrift}`);
+	});
+});

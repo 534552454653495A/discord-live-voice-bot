@@ -34,7 +34,8 @@ export class SessionHealth {
 		this.gate = { allowed: 0, denied: 0, reasons: new Map() };
 		this.jev = { calls: 0, failed: 0, banter: 0, notForBot: 0, suppressed: 0, ms: [] };
 		this.tools = new Map(); // name -> { count, slow, total }
-		this.drift = { now: 0, max: 0 };
+		this.drift = { now: 0, max: 0, rate: 0 };
+		this.overlapFrames = 0; // frames on which somebody was speaking but was not sent (floor control)
 		this.reportedAt = 0; // how many fragments had been seen at the last report
 	}
 
@@ -102,10 +103,16 @@ export class SessionHealth {
 	}
 
 	/** The transcript's clock against ours, as last measured. */
-	driftNow(ms) {
+	driftNow(ms, ratePerSecond = null) {
 		if (!Number.isFinite(ms)) return;
 		this.drift.now = ms;
 		if (ms > this.drift.max) this.drift.max = ms;
+		if (Number.isFinite(ratePerSecond)) this.drift.rate = ratePerSecond;
+	}
+
+	/** One frame on which these people were speaking over the floor holder and were not sent. */
+	overlap(ids) {
+		if (ids?.length) this.overlapFrames++;
 	}
 
 	/** The numbers, for the panel and for tests. */
@@ -129,6 +136,8 @@ export class SessionHealth {
 			unknownPct: pct(this.lines.unknown, lines),
 			driftMs: Math.round(this.drift.now),
 			driftMaxMs: Math.round(this.drift.max),
+			driftRate: Math.round(this.drift.rate * 10) / 10,
+			overlapSeconds: Math.round((this.overlapFrames * 20) / 100) / 10,
 			gateAllowed: this.gate.allowed,
 			gateDenied: this.gate.denied,
 			gateReasons: [...this.gate.reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
@@ -146,7 +155,7 @@ export class SessionHealth {
 	 * The report, as lines of text in the active locale: the numbers, then the warnings that are worth
 	 * one line each. `latency` is the response latency summary the session already keeps.
 	 */
-	report({ why = '', latency = '' } = {}) {
+	report({ why = '', latency = '', takeovers = 0 } = {}) {
 		const s = this.snapshot();
 		const lines = [
 			t('runtime.health_summary', {
@@ -163,8 +172,10 @@ export class SessionHealth {
 				unknown: s.unknownPct,
 				drift: s.driftMs,
 				driftMax: s.driftMaxMs,
+				rate: s.driftRate,
 			}),
 		];
+		if (s.overlapSeconds > 0 || takeovers > 0) lines.push(t('runtime.health_overlap', { seconds: s.overlapSeconds, takeovers }));
 		if (s.gateAllowed || s.gateDenied) {
 			const list = s.gateReasons.map((entry) => `${entry.reason} ×${entry.count}`).join(', ');
 			lines.push(t('runtime.health_gate', { allowed: s.gateAllowed, denied: s.gateDenied, reasons: list ? t('runtime.health_gate_reasons', { list }) : '' }));

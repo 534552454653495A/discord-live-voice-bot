@@ -29,9 +29,15 @@ const GLUE_MS = 1500;
 // A pause inside one request from the owner ("melis... artik konusabilirsin"). Longer than that is
 // two things said, and only the last one is the request.
 const OWNER_SPEECH_GAP_MS = 2500;
-// The transcript's clock against ours (see observeTranscript). The offset is the largest "end minus our
-// position" over this much of our audio; anything beyond the sanity bound is a bug, not a clock.
-const DRIFT_WINDOW_MS = 30_000;
+// The transcript's clock against ours (see observeTranscript). The samples are "end minus our position"
+// over this much of our audio; the offset is the upper envelope of them -- the largest per bucket -- and
+// once there are enough buckets a line through those maxima, so that the offset is known at any moment,
+// silence or not, and its rate is a number of its own. Anything beyond the sanity bound is a bug, not a
+// clock, and no clock runs more than five percent fast.
+const DRIFT_WINDOW_MS = 60_000;
+const DRIFT_BUCKET_MS = 5000;
+const DRIFT_MIN_BUCKETS = 3;
+const DRIFT_MAX_RATE = 0.05;
 const DRIFT_MAX_MS = 120_000;
 const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: null, share: 0, speakers: 0 });
 // How far outside a stretch to look when the stretch itself holds no audio at all. A fragment can land
@@ -146,8 +152,8 @@ export class SpeakerAttribution {
 		// Word level window, for EVERYONE: { word, at, owner, id, pos } (pos = audio position, null if none)
 		this.words = [];
 		this.lastPiece = null; // the previous transcript piece, to tell the rest of a word from a new one
-		this.transcriptDrift = 0; // how far the transcript's positions run ahead of our audio position
-		this.driftSamples = [];
+		this.driftSamples = []; // { at, diff }: how far the transcript's positions ran ahead of our audio position
+		this.driftModel = null; // { fit: { a, c } | null, max, recent }
 		// Monotonic counter stamped on every noted fragment: two fragments can share a millisecond, so
 		// ordering by `at` alone would let an interjection tie with the owner's command and slip past the gate.
 		this.noteSeq = 0;
@@ -397,8 +403,8 @@ export class SpeakerAttribution {
 	 * counter, so the positions are cleared while the arrival time stays.
 	 */
 	resetSession() {
-		this.transcriptDrift = 0;
 		this.driftSamples = [];
+		this.driftModel = null;
 		this.audioMs = 0;
 		this.track = [];
 		for (const entry of this.words) entry.pos = null;
@@ -556,10 +562,57 @@ export class SpeakerAttribution {
 		this.driftSamples.push({ at: this.audioMs, diff });
 		const cutoff = this.audioMs - DRIFT_WINDOW_MS;
 		while (this.driftSamples.length && this.driftSamples[0].at < cutoff) this.driftSamples.shift();
+		// The upper envelope: the largest sample per bucket of our audio. A line through those maxima is the
+		// offset as a function of time, which is what makes it known after a silence and gives it a rate.
+		const maxima = new Map();
 		let max = -Infinity;
-		for (const sample of this.driftSamples) if (sample.diff > max) max = sample.diff;
-		this.transcriptDrift = Math.max(0, max);
+		let recent = -Infinity;
+		for (const sample of this.driftSamples) {
+			const bucket = Math.floor(sample.at / DRIFT_BUCKET_MS);
+			const current = maxima.get(bucket);
+			if (current === undefined || sample.diff > current) maxima.set(bucket, sample.diff);
+			if (sample.diff > max) max = sample.diff;
+			if (this.audioMs - sample.at <= 2 * DRIFT_BUCKET_MS && sample.diff > recent) recent = sample.diff;
+		}
+		let fit = null;
+		if (maxima.size >= DRIFT_MIN_BUCKETS) {
+			let n = 0;
+			let sx = 0;
+			let sy = 0;
+			let sxx = 0;
+			let sxy = 0;
+			for (const [bucket, y] of maxima) {
+				const x = (bucket + 0.5) * DRIFT_BUCKET_MS;
+				n++;
+				sx += x;
+				sy += y;
+				sxx += x * x;
+				sxy += x * y;
+			}
+			const den = n * sxx - sx * sx;
+			if (den > 0) {
+				const a = Math.min(DRIFT_MAX_RATE, Math.max(0, (n * sxy - sx * sy) / den));
+				fit = { a, c: (sy - a * sx) / n };
+			}
+		}
+		this.driftModel = { fit, max: Math.max(0, max), recent: Math.max(0, recent) };
 		return this.transcriptDrift;
+	}
+
+	/** The offset now: the line through the envelope when there is one, the largest recent sample otherwise. */
+	get transcriptDrift() {
+		const model = this.driftModel;
+		if (!model) return 0;
+		if (!model.fit) return model.max;
+		// The recent maximum is a floor under the line: the clock only ever runs ahead, and a line that
+		// averages through the envelope must not put a fragment back in front of the audio.
+		return Math.max(0, model.fit.a * this.audioMs + model.fit.c, model.recent);
+	}
+
+	/** How fast the transcript's clock runs ahead of ours, in ms per second of audio (0 until it is known). */
+	get driftRate() {
+		const fit = this.driftModel?.fit;
+		return fit ? fit.a * 1000 : 0;
 	}
 
 	/** A transcript position in our timeline. */

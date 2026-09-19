@@ -272,3 +272,113 @@ describe('AudioBridge', () => {
 		assert.ok(ticks <= 2, `should realign instead of running 500 frames: ${ticks}`);
 	});
 });
+
+describe('floor control: one voice at a time', () => {
+	const speech = (level) => new Int16Array(480).fill(level);
+
+	it('sends only the floor holder while somebody talks over them', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		for (let i = 0; i < 10; i++) {
+			m.push('a', speech(3000));
+			m.tick();
+		}
+		let frame = null;
+		for (let i = 0; i < 10; i++) {
+			m.push('a', speech(3000));
+			m.push('b', speech(2000));
+			frame = m.tick();
+		}
+		assert.deepEqual(frame.active, ['a'], 'the floor is a s');
+		assert.deepEqual(frame.others, ['b'], 'and b is on record as talking over it');
+		assert.equal(frame.pcm[0], 3000, 'the frame holds a s audio, not the sum');
+		assert.deepEqual(frame.present, ['a'], 'nobody else is in the sound');
+	});
+
+	it('passes the floor at the holder s pause to whoever has been waiting', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		for (let i = 0; i < 10; i++) {
+			m.push('a', speech(3000));
+			m.tick();
+		}
+		for (let i = 0; i < 10; i++) {
+			m.push('a', speech(3000));
+			m.push('b', speech(2000));
+			assert.deepEqual(m.tick().active, ['a']);
+		}
+		let frame = null;
+		for (let i = 0; i < 8; i++) {
+			m.push('b', speech(2000)); // a has stopped sending
+			frame = m.tick();
+		}
+		assert.deepEqual(frame.active, ['b'], 'b has been waiting and gets the floor');
+		assert.equal(frame.pcm[0], 2000);
+		assert.equal(m.floorTakeovers, 0, 'a pause is not a takeover');
+	});
+
+	it('lets a persistent interrupter take a long monologue, and never a short one', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		let at450 = null;
+		let frame = null;
+		for (let i = 0; i < 480; i++) {
+			m.push('a', speech(3000));
+			if (i >= 400) m.push('b', speech(2000));
+			frame = m.tick();
+			if (i === 450) at450 = frame.active;
+		}
+		assert.deepEqual(at450, ['a'], 'a second of interruption changes nothing');
+		assert.deepEqual(frame.active, ['b'], 'after 1.5 s over an 8 s monologue the floor is taken');
+		assert.equal(m.floorTakeovers, 1);
+
+		const short = new SpeakerMixer({ floorControl: true });
+		let last = null;
+		for (let i = 0; i < 200; i++) {
+			short.push('a', speech(3000));
+			if (i >= 100) short.push('b', speech(2000));
+			last = short.tick();
+		}
+		assert.deepEqual(last.active, ['a'], 'a four second turn is not a monologue');
+	});
+
+	it('gives the owner the floor at once, whoever holds it', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		m.setPriority('o');
+		for (let i = 0; i < 10; i++) {
+			m.push('b', speech(2000));
+			m.tick();
+		}
+		let frame = null;
+		for (let i = 0; i < 3; i++) {
+			m.push('b', speech(2000));
+			m.push('o', speech(3000));
+			frame = m.tick();
+		}
+		assert.equal(frame.priority, true);
+		assert.deepEqual(frame.active, ['o']);
+		assert.deepEqual(frame.others, ['b']);
+	});
+
+	it('keeps a murmur out of the frame entirely, so the holder s words really are theirs alone', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		const attribution = new SpeakerAttribution({ ownerId: 'owner' });
+		for (let i = 0; i < 40; i++) {
+			m.push('owner', speech(3000));
+			m.push('attacker', speech(260));
+			const frame = m.tick();
+			attribution.onFrame({ priority: frame.priority, active: frame.active, present: frame.present, sent: true });
+		}
+		assert.equal(attribution.speakerAt(0, 800), true, 'the murmur was never in the audio');
+	});
+
+	it('still sums everybody when nobody clears the speech bar', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		let frame = null;
+		for (let i = 0; i < 6; i++) {
+			m.push('a', speech(260));
+			m.push('b', speech(260));
+			frame = m.tick();
+		}
+		assert.deepEqual(frame.active, []);
+		assert.deepEqual(frame.present.sort(), ['a', 'b']);
+		assert.equal(frame.pcm[0], 520, 'the sum, as without floor control');
+	});
+});

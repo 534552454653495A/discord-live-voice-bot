@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] — 2026-09-19
+
+### Added
+
+- **One voice at a time.** The model hears a sum and cannot pull it apart, so two people at once was the
+  one thing every downstream step was worst at: the transcript came back garbled ("Pom-pom latte"), the line
+  was nobody's, the gate said "somebody talked over you", the command was not run. The owner's priority path
+  had proved the cure — while one voice is sent, everything about that stretch is exact — and it is now the
+  rule for everybody (`FLOOR_CONTROL`, on by default): the person holding the floor is the only one sent,
+  the floor passes at their pause to whoever has been waiting longest, a monologue over eight seconds can be
+  taken by somebody who has talked over it for a second and a half, and the owner takes it at once. What is
+  lost is an interrupter's first seconds, which the model was not understanding anyway. Who was speaking
+  over the holder is on record (the trace, the health report: seconds not sent, floors taken).
+- **The drift model predicts.** The offset of the transcript's clock was the largest sample over a window,
+  which forgot itself after thirty seconds of silence and had no rate. It is now a line through the upper
+  envelope of the samples (the largest per five seconds), so it is known at any moment and has a rate — in
+  the health report as ms per second, which is the number that says whether the send loop is being starved.
+- **Where it is going**: the README carries the plan for the core — adaptive per-person voice detection,
+  fragment assignment as inference, reply control at the protocol, the session module in pieces.
+
 ## [1.28.0] — 2026-09-19
 
 ### Added

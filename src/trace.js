@@ -37,14 +37,15 @@ export class SessionTrace {
 	}
 
 	/** One mixer frame; written only when the set of voices (or the priority flag) changes. */
-	frame({ active, present, priority, sent }, audioMs) {
+	frame({ active, present, priority, others, sent }, audioMs) {
 		if (!sent) return;
 		const ids = (active ?? []).map(String);
 		const pr = (present ?? []).map(String);
-		const key = `${priority ? 1 : 0}|${[...ids].sort().join(',')}|${[...pr].sort().join(',')}`;
+		const o = (others ?? []).map(String);
+		const key = `${priority ? 1 : 0}|${[...ids].sort().join(',')}|${[...pr].sort().join(',')}|${[...o].sort().join(',')}`;
 		if (key === this.lastKey) return;
 		this.lastKey = key;
-		this.write({ t: 'a', ms: audioMs, ids, pr, p: Boolean(priority) });
+		this.write({ t: 'a', ms: audioMs, ids, pr, p: Boolean(priority), o });
 	}
 
 	/** One user transcript fragment: where the transcript put it, where we looked, and what the audio said. */
