@@ -32,7 +32,7 @@ import { callTool, toolDefinitions, toolOutput } from './tools.js';
 import { VoiceSession } from './voice.js';
 import { toolDescription } from './tools/index.js';
 import { SessionHealth } from './health.js';
-import { SessionTrace } from './trace.js';
+import { AudioTrace, SessionTrace } from './trace.js';
 
 // Retry schedule (ms) for rejoining after the voice connection drops; the rest are skipped once one works.
 const RECOVERY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
@@ -255,6 +255,8 @@ export class GuildSession {
 		this.healthTimer.unref?.();
 		this.trace = cfg.trace ? new SessionTrace({ dir: 'data/traces', text: cfg.recordTranscripts !== false, owner: cfg.ownerId ?? null, log: (line) => this.log(line) }) : null;
 		if (this.trace) this.log(t('runtime.log_trace_started', { file: this.trace.file }));
+		this.audioTrace = cfg.traceAudio ? new AudioTrace({ dir: 'data/traces', log: (line) => this.log(line) }) : null;
+		if (this.audioTrace) this.log(t('runtime.log_trace_audio', { file: this.audioTrace.file }));
 		this.memberIndex = new MemberIndex();
 
 		// ---------------------------------------------------------------- music
@@ -414,6 +416,7 @@ export class GuildSession {
 			soloUserId: this.cfg.soloUserId,
 			onFrame: (frame) => {
 				this.trace?.frame(frame, this.attribution.audioMs);
+				if (frame.sent && this.audioTrace) this.audioTrace.write(frame.pcm);
 				if (frame.others?.length) this.health.overlap(frame.others);
 				this.attribution.onFrame(frame);
 				this.trackSentSpeaker(frame);
@@ -2564,6 +2567,7 @@ export class GuildSession {
 		if (this.healthTimer) clearInterval(this.healthTimer);
 		this.healthTimer = null;
 		void this.trace?.close();
+		void this.audioTrace?.close();
 		this.transcriptBuffers.clear();
 		if (this.liveReconnectTimer) clearTimeout(this.liveReconnectTimer);
 		this.liveReconnectTimer = null;

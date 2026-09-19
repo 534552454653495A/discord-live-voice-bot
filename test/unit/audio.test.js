@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Writable } from 'node:stream';
-import { PlaybackQueue, Ring, SAMPLES_PER_FRAME_24K, SpeakerMixer, STEREO_SAMPLES_PER_FRAME_48K, mixInto, peakOf } from '../../src/audio.js';
+import { PlaybackQueue, Ring, SAMPLES_PER_FRAME_24K, SpeakerMixer, STEREO_SAMPLES_PER_FRAME_48K, downsampleState, mixInto, peakOf, stereo48kToMono24k } from '../../src/audio.js';
 import { AudioBridge } from '../../src/bridge.js';
 import { Ducker } from '../../src/music.js';
 import { SpeakerAttribution } from '../../src/attribution.js';
@@ -380,5 +380,80 @@ describe('floor control: one voice at a time', () => {
 		assert.deepEqual(frame.active, []);
 		assert.deepEqual(frame.present.sort(), ['a', 'b']);
 		assert.equal(frame.pcm[0], 520, 'the sum, as without floor control');
+	});
+});
+
+describe('the anti-alias filter in front of the downsampler', () => {
+	const tone = (hz, frames, amplitude = 10000) => {
+		const buf = Buffer.alloc(frames * 4);
+		for (let i = 0; i < frames; i++) {
+			const v = Math.round(amplitude * Math.sin((2 * Math.PI * hz * i) / 48000));
+			buf.writeInt16LE(v, i * 4);
+			buf.writeInt16LE(v, i * 4 + 2);
+		}
+		return buf;
+	};
+	const rms = (samples) => Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length);
+	const through = (hz) => {
+		const state = downsampleState();
+		let out = [];
+		for (let chunk = 0; chunk < 5; chunk++) out = out.concat(Array.from(stereo48kToMono24k(tone(hz, 960, 10000), state)));
+		return rms(out.slice(-1200)); // the last 50 ms, past any transient
+	};
+	// The two-tap average this replaces let a 16 kHz tone through at half amplitude and folded it down to
+	// 8 kHz, into the middle of the band a transcriber listens to.
+	it('keeps speech and drops what would fold down into it', () => {
+		const speech = through(2000);
+		assert.ok(Math.abs(speech - 10000 / Math.SQRT2) < 300, `2 kHz passes at full level: ${speech.toFixed(0)}`);
+		const hiss = through(16000);
+		assert.ok(hiss < 500, `16 kHz is gone before it can fold down: ${hiss.toFixed(0)}`);
+	});
+});
+
+describe('the frames a newcomer lost while somebody else held the floor', () => {
+	const marker = (v) => new Int16Array(480).fill(v);
+
+	// To a transcriber the onset of a word is the word: "adamsın" without its "a" came back as "ağlar
+	// mısın". The frames discarded while the previous holder had the floor go out first, and the live
+	// ones queue behind them until the speaker pauses.
+	it('are sent first, in order, with nothing lost, and drain after they stop', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		for (let i = 0; i < 20; i++) {
+			m.push('a', marker(3000));
+			if (i >= 12) m.push('b', marker(2000 + i)); // b starts over a at frame 12
+			m.tick();
+		}
+		const after = [];
+		for (let i = 20; i < 40; i++) {
+			m.push('b', marker(2000 + i)); // a has stopped sending
+			const frame = m.tick();
+			after.push({ who: frame.active[0] ?? null, v: frame.pcm[0] });
+		}
+		const first = after.findIndex((entry) => entry.who === 'b');
+		assert.ok(first > 0 && first <= 6, `b gets the floor once the frames of a have stopped: ${first}`);
+		const values = after.slice(first).map((entry) => entry.v);
+		assert.ok(values[0] < 2000 + 20 + first, `the first thing sent is an earlier frame of b: ${values[0]}`);
+		for (let i = 1; i < values.length; i++) assert.equal(values[i], values[i - 1] + 1, 'and nothing after it is lost or reordered');
+
+		const drained = [];
+		for (let i = 0; i < 16; i++) {
+			const frame = m.tick(); // b has stopped too
+			drained.push({ who: frame.active[0] ?? null, v: frame.pcm[0] });
+		}
+		const queued = drained.filter((entry) => entry.who === 'b');
+		assert.ok(queued.length >= 5 && queued.length <= 12, `the queue drains while b keeps the floor: ${queued.length}`);
+		assert.equal(queued[queued.length - 1].v, 2039, 'down to the last frame they sent');
+		for (let i = 1; i < queued.length; i++) assert.equal(queued[i].v, queued[i - 1].v + 1);
+		assert.equal(drained[drained.length - 1].who, null, 'and then the floor is free');
+	});
+
+	it('are not needed when the floor was free: the live frame goes straight out', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		let frame = null;
+		for (let i = 0; i < 4; i++) {
+			m.push('b', marker(2000 + i));
+			frame = m.tick();
+		}
+		assert.equal(frame.pcm[0], 2003, 'nothing of theirs was ever discarded');
 	});
 });

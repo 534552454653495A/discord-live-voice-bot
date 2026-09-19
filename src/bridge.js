@@ -74,7 +74,7 @@ export class AudioBridge {
 		const { pcm, active, present, priority, others } = this.mixer.tick();
 		const live = this.getLive();
 		const sent = Boolean(live?.ready && live.sendAudio(pcm));
-		this.onFrame?.({ priority, active, present, others, sent });
+		this.onFrame?.({ priority, active, present, others, sent, pcm });
 		// The "who is speaking" debug line is printed by the session (GuildSession.logSpeaking), which can
 		// turn an id into a name; the bridge cannot, and printing raw ids here was most of the debug log.
 

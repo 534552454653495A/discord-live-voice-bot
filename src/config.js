@@ -162,6 +162,8 @@ export function loadConfig(env = process.env) {
 		jevMaxCalls: num(env.JEV_MAX_CALLS, 3000, { min: 0 }),
 		// The flight recorder: frames, fragments and decisions to data/traces/, for scripts/replay-trace.mjs.
 		trace: bool(env.TRACE, false),
+		// Exactly the audio sent to the model, as a WAV under data/traces/: what the far end heard.
+		traceAudio: bool(env.TRACE_AUDIO, false),
 		leaveDelayMs: num(env.LEAVE_DELAY_MS, 2500, { min: 0 }),
 		respondToDms: bool(env.RESPOND_DMS, true),
 		respondToMentions: bool(env.RESPOND_MENTIONS, true),

@@ -14,7 +14,7 @@ import {
 	joinVoiceChannel,
 } from '@discordjs/voice';
 import prism from 'prism-media';
-import { SAMPLES_PER_FRAME_48K, stereo48kToMono24k } from './audio.js';
+import { SAMPLES_PER_FRAME_48K, downsampleState, stereo48kToMono24k } from './audio.js';
 import { AudioBridge } from './bridge.js';
 import { t } from './i18n/index.js';
 
@@ -291,8 +291,9 @@ export class VoiceSession {
 
 		const opusStream = this.connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.Manual } });
 		const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: SAMPLES_PER_FRAME_48K });
+		const down = downsampleState(); // the anti-alias filter's memory, one per stream
 		decoder.on('data', (pcm) => {
-			const mono = stereo48kToMono24k(pcm);
+			const mono = stereo48kToMono24k(pcm, down);
 			this.mixer.push(userId, mono);
 			this.onUserPcm?.(userId, mono);
 		});

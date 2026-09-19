@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0] — 2026-09-19
+
+### Fixed
+
+- **What the transcriber hears is closer to what was said.** "Adamsın sen" came back as "Ağlar mısın sen".
+  The transcript is the far end's, but two things this side did to the sound were found on reading the
+  path. The 48 kHz to 24 kHz downsampler was a two-tap average, which takes 3 dB off at the new Nyquist and
+  lets everything between 12 and 24 kHz — the hiss of "s", "ş" and "f" in a fullband Opus stream — fold
+  down into the band the transcriber listens to; it is now a 15-tap half-band filter (-26 dB at 16 kHz,
+  -47 dB at 20 kHz) with its memory carried across frames. And while somebody holds the floor, the first
+  frames of whoever speaks next were discarded until the holder paused — the onset of the word, which to a
+  transcriber is the word. The last 160 ms of every speaker are kept; when the floor passes to somebody whose
+  frames were being discarded, those go out first and the live ones queue behind them until they pause,
+  with nothing lost and the stream still one frame per tick.
+
+### Added
+
+- **`TRACE_AUDIO=1` writes exactly the audio sent to the model** as `data/traces/sent-<time>.wav` (24 kHz
+  mono, 2.9 MB a minute, local only): when a transcript comes back wrong, that file says whether the far end
+  misheard or this side changed the sound.
+
 ## [1.29.3] — 2026-09-19
 
 ### Fixed

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { SessionTrace, replayTrace } from '../../src/trace.js';
+import { AudioTrace, SessionTrace, replayTrace } from '../../src/trace.js';
 
 // The flight recorder and its replay: what was recorded live must reproduce the same decisions when
 // run through the attribution again, so that a live failure can become a test.
@@ -72,5 +72,24 @@ describe('the flight recorder', () => {
 		const [file] = await readdir(dir);
 		const body = await readFile(path.join(dir, file), 'utf8');
 		assert.ok(!body.includes('secret'));
+	});
+});
+
+describe('the sent audio on file', () => {
+	it('writes a WAV of exactly what was sent, with its sizes filled in on close', async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), 'trace-'));
+		const trace = new AudioTrace({ dir, now: () => 1_000_000 });
+		trace.write(new Int16Array(480).fill(7));
+		trace.write(new Int16Array(480).fill(-7));
+		await trace.close();
+		const [file] = await readdir(dir);
+		assert.match(file, /^sent-.*\.wav$/);
+		const body = await readFile(path.join(dir, file));
+		assert.equal(body.length, 44 + 2 * 480 * 2);
+		assert.equal(body.toString('ascii', 0, 4), 'RIFF');
+		assert.equal(body.readUInt32LE(24), 24_000, 'sample rate');
+		assert.equal(body.readUInt32LE(40), 2 * 480 * 2, 'data size, filled in on close');
+		assert.equal(body.readInt16LE(44), 7, 'the first sample sent');
+		assert.equal(body.readInt16LE(44 + 480 * 2), -7);
 	});
 });

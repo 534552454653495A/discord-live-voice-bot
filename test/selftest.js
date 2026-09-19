@@ -61,6 +61,7 @@ import {
 	mono24kToStereo48k,
 	silenceStereo48k,
 	stereo48kToMono24k,
+	downsampleState,
 } from '../src/audio.js';
 import { LiveSession } from '../src/live.js';
 
@@ -187,24 +188,23 @@ function makeStereo48k(samples) {
 }
 
 console.log('DSP');
-check('stereo48kToMono24k: averages 2 taps and decimates 2:1', () => {
-	const buf = makeStereo48k([100, 200, 300, 400, 500, 600]);
-	const mono = stereo48kToMono24k(buf);
-	assert.equal(mono.length, 3);
-	assert.deepEqual(Array.from(mono), [150, 350, 550]);
+check('stereo48kToMono24k: halves the rate, passes a constant, and carries the filter across frames', () => {
+	const state = downsampleState();
+	const mono = stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)), state);
+	assert.equal(mono.length, 30);
+	assert.equal(mono[29], 1000, 'unity gain once the filter has filled');
+	const again = stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)), state);
+	assert.equal(again[0], 1000, 'no click at the frame boundary: the filter remembers the last frame');
+	assert.ok(stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)))[0] < 1000, 'without state a frame starts from silence');
 });
-check('stereo48kToMono24k: averages the two channels before decimating', () => {
-	const buf = Buffer.alloc(4 * 4); // 4 stereo frames -> 2 output samples
-	buf.writeInt16LE(1000, 0);
-	buf.writeInt16LE(2000, 2);
-	buf.writeInt16LE(-1000, 4);
-	buf.writeInt16LE(-2000, 6);
-	buf.writeInt16LE(500, 8);
-	buf.writeInt16LE(500, 10);
-	buf.writeInt16LE(0, 12);
-	buf.writeInt16LE(0, 14);
-	// per-frame mono averages: 1500, -1500, 500, 0 -> pairwise averages: 0, 250
-	assert.deepEqual(Array.from(stereo48kToMono24k(buf)), [0, 250]);
+check('stereo48kToMono24k: averages the two channels', () => {
+	const buf = Buffer.alloc(4 * 60);
+	for (let i = 0; i < 60; i++) {
+		buf.writeInt16LE(500, i * 4);
+		buf.writeInt16LE(-100, i * 4 + 2);
+	}
+	const mono = stereo48kToMono24k(buf);
+	assert.equal(mono[mono.length - 1], 200);
 });
 check('mono24kToStereo48k: upsamples 4x, interpolates and carries state across calls', () => {
 	const state = { last: 0 };

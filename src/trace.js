@@ -9,7 +9,7 @@
 //
 // Nothing here is audio. The transcript text is included only when transcripts may be recorded at all
 // (RECORD_TRANSCRIPTS), and the file lives under data/, which stays out of the repository.
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SpeakerAttribution } from './attribution.js';
 
@@ -133,7 +133,83 @@ export class SessionTrace {
 	}
 }
 
+function wavHeader(sampleRate, dataBytes) {
+	const header = Buffer.alloc(44);
+	header.write('RIFF', 0);
+	header.writeUInt32LE(36 + dataBytes, 4);
+	header.write('WAVE', 8);
+	header.write('fmt ', 12);
+	header.writeUInt32LE(16, 16);
+	header.writeUInt16LE(1, 20); // PCM
+	header.writeUInt16LE(1, 22); // mono
+	header.writeUInt32LE(sampleRate, 24);
+	header.writeUInt32LE(sampleRate * 2, 28);
+	header.writeUInt16LE(2, 32);
+	header.writeUInt16LE(16, 34);
+	header.write('data', 36);
+	header.writeUInt32LE(dataBytes, 40);
+	return header;
+}
+
 /**
+ * With TRACE_AUDIO=1: exactly the audio sent to the model, as a WAV file, so that "what did it hear" has
+ * an answer that can be listened to -- a transcript that reads "ağlar mısın" for "adamsın" is either the
+ * far end's ear or something this side did to the sound, and this is how to tell. 24 kHz mono, 2.9 MB a
+ * minute, local only.
+ */
+export class AudioTrace {
+	constructor({ dir, name = 'sent', sampleRate = 24_000, log = () => {}, now = Date.now } = {}) {
+		const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-');
+		this.file = path.join(dir, `${name}-${stamp}.wav`);
+		this.sampleRate = sampleRate;
+		this.log = log;
+		this.pending = [];
+		this.bytes = 0;
+		this.closed = false;
+		this.timer = null;
+		this.chain = mkdir(dir, { recursive: true })
+			.then(() => writeFile(this.file, wavHeader(sampleRate, 0)))
+			.catch((err) => this.log(String(err?.message ?? err)));
+	}
+
+	/** One frame of what was sent; copied at once, the buffer is the mixer's and is overwritten next tick. */
+	write(samples) {
+		if (this.closed || !samples?.length) return;
+		this.pending.push(Buffer.from(Buffer.from(samples.buffer, samples.byteOffset, samples.length * 2)));
+		if (!this.timer) {
+			this.timer = setTimeout(() => this.flush(), FLUSH_MS);
+			this.timer.unref?.();
+		}
+	}
+
+	flush() {
+		if (this.timer) clearTimeout(this.timer);
+		this.timer = null;
+		if (!this.pending.length) return this.chain;
+		const chunk = Buffer.concat(this.pending);
+		this.pending = [];
+		this.bytes += chunk.length;
+		this.chain = this.chain.then(() => appendFile(this.file, chunk)).catch((err) => this.log(String(err?.message ?? err)));
+		return this.chain;
+	}
+
+	/** The last flush, and the header rewritten with the sizes now known. */
+	async close() {
+		const done = this.flush();
+		this.closed = true;
+		await done;
+		try {
+			const handle = await open(this.file, 'r+');
+			await handle.write(wavHeader(this.sampleRate, this.bytes), 0, 44, 0);
+			await handle.close();
+		} catch (err) {
+			this.log(String(err?.message ?? err));
+		}
+	}
+}
+
+/**
+ * Runs the attribution over a trace's records/**
  * Runs the attribution over a trace's records and compares what it decides now with what was decided
  * then. The straddle handling of onTranscript (a fragment judged on the audio new since the last one)
  * is not replayed: the recorded positions are the ones actually looked up.

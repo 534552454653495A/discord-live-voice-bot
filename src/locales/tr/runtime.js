@@ -99,6 +99,7 @@ export default {
 	floor_control_on: 'Söz kontrolü açık: aynı anda konuşulduğunda modele yalnızca söz sahibinin sesi gider; söz duraklamada sıradakine geçer, sahip her zaman anında alır.',
 	health_overlap: '[sağlık] üst üste konuşma: {seconds} sn (modele gitmedi), araya girip söz alma {takeovers}',
 	log_trace_started: '[iz] kayıt: {file}',
+	log_trace_audio: '[iz] gönderilen ses: {file}',
 	health_why_periodic: 'her {minutes} dakikada',
 	health_why_closed: 'oturum kapandı',
 	health_why_stop: 'durduruldu',

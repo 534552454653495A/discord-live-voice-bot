@@ -34,21 +34,45 @@ export function mixInto(out, src, count = src.length, gain = 1) {
 	}
 }
 
+// The low-pass in front of the 48 kHz -> 24 kHz decimation: 15 taps, a Hamming-windowed sinc cut off at
+// 12 kHz, unity gain in Q15. The two-tap average it replaces took 3 dB off at the new Nyquist and let
+// everything between 12 and 24 kHz -- the hiss of "s", "ş" and "f" in a fullband Opus stream -- fold
+// down into the band the transcriber listens to, which is one of the ways "adamsın" can come back as
+// "ağlar mısın". This one: -6 dB at 12 kHz, -26 dB at 16 kHz, -47 dB at 20 kHz.
+const HALF_BAND = Int32Array.from([-120, 0, 530, 0, -2242, 0, 9993, 16446, 9993, 0, -2242, 0, 530, 0, -120]);
+const HALF_BAND_HISTORY = HALF_BAND.length - 1;
+
+/** The filter's memory between frames, one per stream: the last few mono samples of the previous frame. */
+export function downsampleState() {
+	return { history: new Int32Array(HALF_BAND_HISTORY), scratch: null };
+}
+
 /**
- * Buffer(s16le stereo 48k) -> Int16Array(mono 24k).
- * Channel downmix + 2-tap box filter + decimate by 2 (cheap anti-aliasing before
- * the 24 kHz rate that GPT-Live expects).
+ * Buffer(s16le stereo 48k) -> Int16Array(mono 24k): channel downmix, half-band low-pass, decimate by 2.
+ * `state` (downsampleState) carries the filter across frames so a frame boundary is not a click; without
+ * one each call starts from silence, which is fine for a buffer on its own.
  */
-export function stereo48kToMono24k(pcm) {
+export function stereo48kToMono24k(pcm, state = null) {
 	const frames = pcm.length >> 2; // stereo frames
 	const out = new Int16Array(frames >> 1);
-	for (let i = 0; i < out.length; i++) {
-		const a = i * 8; // byte offset of the even frame of the pair
-		const b = a + 4; // byte offset of the odd frame of the pair
-		const monoA = (pcm.readInt16LE(a) + pcm.readInt16LE(a + 2)) >> 1;
-		const monoB = (pcm.readInt16LE(b) + pcm.readInt16LE(b + 2)) >> 1;
-		out[i] = (monoA + monoB) >> 1;
+	const own = state ?? downsampleState();
+	if (!own.scratch || own.scratch.length < frames + HALF_BAND_HISTORY) own.scratch = new Int32Array(frames + HALF_BAND_HISTORY);
+	const x = own.scratch;
+	x.set(own.history, 0);
+	for (let i = 0; i < frames; i++) {
+		const at = i * 4;
+		x[HALF_BAND_HISTORY + i] = (pcm.readInt16LE(at) + pcm.readInt16LE(at + 2)) >> 1;
 	}
+	for (let i = 0; i < out.length; i++) {
+		// Output i is the filter centred on input sample 2i - 7: a constant delay of a third of a
+		// millisecond, and no drift.
+		const base = 2 * i;
+		let acc = 0;
+		for (let k = 0; k < HALF_BAND.length; k++) acc += HALF_BAND[k] * x[base + k];
+		const y = acc >> 15;
+		out[i] = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
+	}
+	own.history.set(x.subarray(frames, frames + HALF_BAND_HISTORY));
 	return out;
 }
 
@@ -182,6 +206,13 @@ const PRESENCE_PEAK = 200;
 // was not understanding anyway.
 const FLOOR_MAX_FRAMES = 400;
 const BARGE_FRAMES = 75;
+// While somebody holds the floor, everybody else's frames are discarded -- including the first frames of
+// whoever speaks next, until the holder pauses. To a transcriber the onset of a word is the word:
+// "adamsın" without its "a" is anybody's guess. So the last few frames of every speaker are kept, and
+// when the floor passes to somebody whose frames were being discarded, those frames go out first and
+// the live ones queue behind them until they pause. Nothing is lost, and the stream stays one frame
+// per tick. 240 ms: the holder's hold after their last loud frame, and the onset on top of it.
+const PREROLL_FRAMES = 12;
 const LONG_AGO = -1e9;
 
 /**
@@ -208,10 +239,12 @@ export class SpeakerMixer {
 		floorControl = false,
 		floorMaxFrames = FLOOR_MAX_FRAMES,
 		bargeFrames = BARGE_FRAMES,
+		prerollFrames = PREROLL_FRAMES,
 	} = {}) {
 		this.floorControl = floorControl;
 		this.floorMaxFrames = floorMaxFrames;
 		this.bargeFrames = bargeFrames;
+		this.prerollFrames = prerollFrames;
 		this.floorId = null; // who holds the floor under floor control (or the priority speaker)
 		this.floorSince = 0;
 		this.floorTakeovers = 0; // how often the floor was taken from somebody still speaking
@@ -245,7 +278,7 @@ export class SpeakerMixer {
 	_voice(id) {
 		let voice = this.voices.get(id);
 		if (!voice) {
-			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false };
+			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false, recent: [], pending: [] };
 			this.voices.set(id, voice);
 		}
 		return voice;
@@ -325,8 +358,25 @@ export class SpeakerMixer {
 	_takeFloor(id, takeover = false) {
 		if (this.floorId === id) return;
 		if (takeover) this.floorTakeovers++;
+		// Their first frames were discarded while the previous holder had the floor: those go out first, and
+		// the frame read this tick goes out in its turn behind them. From a free floor nothing was lost, and
+		// whatever an earlier turn left queued is not theirs to say now.
+		const voice = this._voice(id);
+		voice.pending = this.floorId !== null ? voice.recent.slice(0, -1) : [];
 		this.floorId = id;
 		this.floorSince = this.frames;
+	}
+
+	/** The floor holder's audio for this tick: queued frames first, then the live one. */
+	_emitFloor(out, f) {
+		const voice = f.voice;
+		if (voice.pending.length) {
+			if (f.n > 0) voice.pending.push(voice.recent[voice.recent.length - 1] ?? f.buf.slice(0, f.n)); // this tick, already kept
+			const frame = voice.pending.shift();
+			out.set(frame.subarray(0, Math.min(frame.length, this.frameSamples)));
+			return;
+		}
+		if (f.n > 0) out.set(f.buf.subarray(0, f.n));
 	}
 
 	/**
@@ -350,6 +400,13 @@ export class SpeakerMixer {
 			const speaking = this._speaking(voice);
 			if (speaking && !voice.wasSpeaking) voice.runStart = this.frames; // the queue for the floor is by this
 			voice.wasSpeaking = speaking;
+			if (n > 0) {
+				// Kept whether or not it is sent: the pre-roll if the floor passes to them (see _takeFloor).
+				voice.recent.push(buf.slice(0, n));
+				if (voice.recent.length > this.prerollFrames) voice.recent.shift();
+			} else if (!speaking) {
+				voice.recent.length = 0; // gone quiet: what they said minutes ago is no onset of anything
+			}
 			frames.push({ id, buf, n, peak, voice, speaking });
 		}
 		const speakingBut = (holder) => frames.filter((f) => f.speaking && f.id !== holder).map((f) => f.id);
@@ -359,8 +416,8 @@ export class SpeakerMixer {
 		if (this.priorityId) {
 			const own = frames.find((f) => f.id === this.priorityId);
 			if (own && this._holdsFloor(own.voice)) {
-				if (own.n > 0) out.set(own.buf.subarray(0, own.n));
 				this._takeFloor(this.priorityId, speakingBut(this.priorityId).length > 0);
+				this._emitFloor(out, own);
 				return { pcm: out, active: [this.priorityId], present: [this.priorityId], priority: true, others: speakingBut(this.priorityId) };
 			}
 		}
@@ -369,7 +426,7 @@ export class SpeakerMixer {
 		//    their pause it goes to whoever has been speaking longest; a monologue past FLOOR_MAX_FRAMES can
 		//    be taken by somebody who has been talking over it for BARGE_FRAMES.
 		const speaking = frames.filter((f) => f.speaking).sort((a, b) => a.voice.runStart - b.voice.runStart || b.voice.energy - a.voice.energy);
-		if (this.floorControl && speaking.length) {
+		if (this.floorControl) {
 			let holder = speaking.find((f) => f.id === this.floorId) ?? null;
 			let takeover = false;
 			if (holder && this.frames - this.floorSince >= this.floorMaxFrames) {
@@ -379,10 +436,18 @@ export class SpeakerMixer {
 					takeover = true;
 				}
 			}
-			if (!holder) holder = speaking[0];
-			this._takeFloor(holder.id, takeover);
-			if (holder.n > 0) out.set(holder.buf.subarray(0, holder.n));
-			return { pcm: out, active: [holder.id], present: [holder.id], priority: false, others: speakingBut(holder.id) };
+			if (!holder && this.floorId !== null) {
+				// The holder has stopped, but frames of theirs are still queued: they keep the floor until the
+				// queue is empty, so nothing of theirs is lost to the handover.
+				const draining = frames.find((f) => f.id === this.floorId);
+				if (draining?.voice.pending.length) holder = draining;
+			}
+			if (!holder && speaking.length) holder = speaking[0];
+			if (holder) {
+				this._takeFloor(holder.id, takeover);
+				this._emitFloor(out, holder);
+				return { pcm: out, active: [holder.id], present: [holder.id], priority: false, others: speakingBut(holder.id) };
+			}
 		}
 
 		// 3) Nobody is speaking (under floor control), or the plain sum: everybody's audio, loudest first.

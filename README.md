@@ -263,6 +263,9 @@ node scripts/replay-trace.mjs data/traces/<file>.jsonl
 which lists every fragment decided differently from the live session — a live failure becomes a test, and a
 change to the attribution is judged against real rooms.
 
+`TRACE_AUDIO=1` writes exactly the audio sent to the model as `data/traces/sent-<time>.wav` — when a transcript
+comes back wrong, that file says whether the far end misheard or this side changed the sound.
+
 ## Where it is going
 
 The core is a diarization problem solved without diarization: one mixed stream, a per-person record of who

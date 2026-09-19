@@ -99,6 +99,7 @@ export default {
 	floor_control_on: 'Floor control on: when people talk at once only the floor holder is sent to the model; the floor passes at a pause to whoever has waited longest, and the owner always takes it at once.',
 	health_overlap: '[health] talking over each other: {seconds} s (not sent), floor taken from a speaker {takeovers} times',
 	log_trace_started: '[trace] recording: {file}',
+	log_trace_audio: '[trace] audio sent: {file}',
 	health_why_periodic: 'every {minutes} minutes',
 	health_why_closed: 'session closed',
 	health_why_stop: 'stopped',
