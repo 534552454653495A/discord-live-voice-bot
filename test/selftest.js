@@ -60,8 +60,6 @@ import {
 	SpeakerMixer,
 	mono24kToStereo48k,
 	silenceStereo48k,
-	stereo48kToMono24k,
-	downsampleState,
 } from '../src/audio.js';
 import { LiveSession } from '../src/live.js';
 
@@ -177,35 +175,7 @@ function makeToolDeps({ messages = new Map(), emojis = [], stickers = [] } = {})
 
 // ------------------------------------------------------------------ DSP
 
-/** mono samples -> interleaved stereo 48k buffer (same value in both channels). */
-function makeStereo48k(samples) {
-	const buf = Buffer.alloc(samples.length * 4);
-	for (let i = 0; i < samples.length; i++) {
-		buf.writeInt16LE(samples[i], i * 4);
-		buf.writeInt16LE(samples[i], i * 4 + 2);
-	}
-	return buf;
-}
-
 console.log('DSP');
-check('stereo48kToMono24k: halves the rate, passes a constant, and carries the filter across frames', () => {
-	const state = downsampleState();
-	const mono = stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)), state);
-	assert.equal(mono.length, 30);
-	assert.equal(mono[29], 1000, 'unity gain once the filter has filled');
-	const again = stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)), state);
-	assert.equal(again[0], 1000, 'no click at the frame boundary: the filter remembers the last frame');
-	assert.ok(stereo48kToMono24k(makeStereo48k(Array.from({ length: 60 }, () => 1000)))[0] < 1000, 'without state a frame starts from silence');
-});
-check('stereo48kToMono24k: averages the two channels', () => {
-	const buf = Buffer.alloc(4 * 60);
-	for (let i = 0; i < 60; i++) {
-		buf.writeInt16LE(500, i * 4);
-		buf.writeInt16LE(-100, i * 4 + 2);
-	}
-	const mono = stereo48kToMono24k(buf);
-	assert.equal(mono[mono.length - 1], 200);
-});
 check('mono24kToStereo48k: upsamples 4x, interpolates and carries state across calls', () => {
 	const state = { last: 0 };
 	const out1 = mono24kToStereo48k(Int16Array.from([0, 1000]), state);

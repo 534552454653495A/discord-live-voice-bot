@@ -12,6 +12,7 @@
 import { appendFile, mkdir, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SpeakerAttribution } from './attribution.js';
+import { t } from './i18n/index.js';
 
 const FLUSH_MS = 1000;
 
@@ -167,6 +168,9 @@ export class AudioTrace {
 		this.bytes = 0;
 		this.closed = false;
 		this.timer = null;
+		this.now = now;
+		this.firstAt = 0;
+		this.lastAt = 0;
 		this.chain = mkdir(dir, { recursive: true })
 			.then(() => writeFile(this.file, wavHeader(sampleRate, 0)))
 			.catch((err) => this.log(String(err?.message ?? err)));
@@ -175,6 +179,8 @@ export class AudioTrace {
 	/** One frame of what was sent; copied at once, the buffer is the mixer's and is overwritten next tick. */
 	write(samples) {
 		if (this.closed || !samples?.length) return;
+		this.lastAt = this.now();
+		if (!this.firstAt) this.firstAt = this.lastAt;
 		this.pending.push(Buffer.from(Buffer.from(samples.buffer, samples.byteOffset, samples.length * 2)));
 		if (!this.timer) {
 			this.timer = setTimeout(() => this.flush(), FLUSH_MS);
@@ -204,6 +210,13 @@ export class AudioTrace {
 			await handle.close();
 		} catch (err) {
 			this.log(String(err?.message ?? err));
+		}
+		// Audio seconds against wall-clock seconds: if these differ, the drift between the transcript's
+		// clock and ours starts on this side.
+		if (this.bytes > 0) {
+			const seconds = (this.bytes / (2 * this.sampleRate)).toFixed(1);
+			const wall = ((this.lastAt - this.firstAt) / 1000 + 0.02).toFixed(1);
+			this.log(t('runtime.log_trace_audio_closed', { file: this.file, seconds, wall }));
 		}
 	}
 }

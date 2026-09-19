@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Writable } from 'node:stream';
-import { PlaybackQueue, Ring, SAMPLES_PER_FRAME_24K, SpeakerMixer, STEREO_SAMPLES_PER_FRAME_48K, downsampleState, mixInto, peakOf, stereo48kToMono24k } from '../../src/audio.js';
+import { PlaybackQueue, Ring, SAMPLES_PER_FRAME_24K, SpeakerMixer, STEREO_SAMPLES_PER_FRAME_48K, int16From, mixInto, peakOf, softClip } from '../../src/audio.js';
 import { AudioBridge } from '../../src/bridge.js';
 import { Ducker } from '../../src/music.js';
 import { SpeakerAttribution } from '../../src/attribution.js';
@@ -383,33 +383,6 @@ describe('floor control: one voice at a time', () => {
 	});
 });
 
-describe('the anti-alias filter in front of the downsampler', () => {
-	const tone = (hz, frames, amplitude = 10000) => {
-		const buf = Buffer.alloc(frames * 4);
-		for (let i = 0; i < frames; i++) {
-			const v = Math.round(amplitude * Math.sin((2 * Math.PI * hz * i) / 48000));
-			buf.writeInt16LE(v, i * 4);
-			buf.writeInt16LE(v, i * 4 + 2);
-		}
-		return buf;
-	};
-	const rms = (samples) => Math.sqrt(samples.reduce((sum, v) => sum + v * v, 0) / samples.length);
-	const through = (hz) => {
-		const state = downsampleState();
-		let out = [];
-		for (let chunk = 0; chunk < 5; chunk++) out = out.concat(Array.from(stereo48kToMono24k(tone(hz, 960, 10000), state)));
-		return rms(out.slice(-1200)); // the last 50 ms, past any transient
-	};
-	// The two-tap average this replaces let a 16 kHz tone through at half amplitude and folded it down to
-	// 8 kHz, into the middle of the band a transcriber listens to.
-	it('keeps speech and drops what would fold down into it', () => {
-		const speech = through(2000);
-		assert.ok(Math.abs(speech - 10000 / Math.SQRT2) < 300, `2 kHz passes at full level: ${speech.toFixed(0)}`);
-		const hiss = through(16000);
-		assert.ok(hiss < 500, `16 kHz is gone before it can fold down: ${hiss.toFixed(0)}`);
-	});
-});
-
 describe('the frames a newcomer lost while somebody else held the floor', () => {
 	const marker = (v) => new Int16Array(480).fill(v);
 
@@ -455,5 +428,144 @@ describe('the frames a newcomer lost while somebody else held the floor', () => 
 			frame = m.tick();
 		}
 		assert.equal(frame.pcm[0], 2003, 'nothing of theirs was ever discarded');
+	});
+});
+
+describe('the decoder s buffer as samples', () => {
+	it('copies, and copes with a buffer that starts at an odd byte', () => {
+		const backing = Buffer.alloc(7);
+		backing.writeInt16LE(-5, 1);
+		backing.writeInt16LE(9, 3);
+		const odd = backing.subarray(1, 6); // byteOffset 1, length 5: two samples and a stray byte
+		assert.throws(() => new Int16Array(odd.buffer, odd.byteOffset, 2), 'a view would throw');
+		const samples = int16From(odd);
+		assert.deepEqual(Array.from(samples), [-5, 9]);
+		backing.writeInt16LE(1, 1);
+		assert.equal(samples[0], -5, 'a copy, not a view');
+	});
+});
+
+describe('a ring that overflows', () => {
+	it('says how many samples it threw away', () => {
+		const ring = new Ring(10);
+		assert.equal(ring.push(new Int16Array(6)), 0);
+		assert.equal(ring.push(new Int16Array(6)), 2, 'two of the oldest went');
+		assert.equal(ring.length, 10);
+		assert.equal(ring.push(new Int16Array(25)), 25, 'a push larger than the ring keeps only its tail: all it held and the head of the push went');
+	});
+
+	it('is counted by the mixer in frames', () => {
+		const m = new SpeakerMixer({ bufferFrames: 2 });
+		for (let i = 0; i < 4; i++) m.push('a', new Int16Array(480).fill(100));
+		assert.equal(m.stats.overflow, 2);
+	});
+});
+
+describe('a packet that never arrived mid-sentence', () => {
+	const marker = (v) => new Int16Array(480).fill(v);
+
+	// 20 ms of nothing in the middle of a word is a click and a missing syllable to the transcriber. The
+	// decoder's own guess at the frame (Opus packet loss concealment) goes out in its place, a few frames
+	// at most; after that the gap is real.
+	it('is filled by the decoder a few times, then the silence is real', () => {
+		const m = new SpeakerMixer();
+		let asked = 0;
+		m.setConcealer('a', () => {
+			asked++;
+			return marker(1234);
+		});
+		for (let i = 0; i < 3; i++) {
+			m.push('a', marker(3000));
+			m.tick();
+		}
+		const holes = [];
+		for (let i = 0; i < 5; i++) holes.push(m.tick().pcm[0]); // a's packets stop
+		assert.deepEqual(holes, [1234, 1234, 1234, 0, 0]);
+		assert.equal(asked, 3);
+		assert.equal(m.stats.holes, 5, 'every one of them was a hole; only three were filled');
+		assert.equal(m.stats.concealed, 3);
+	});
+
+	it('is not filled when they were not speaking', () => {
+		const m = new SpeakerMixer();
+		let asked = 0;
+		m.setConcealer('a', () => {
+			asked++;
+			return marker(1234);
+		});
+		m.push('a', marker(100)); // below the speech bar
+		m.tick();
+		m.tick();
+		assert.equal(asked, 0);
+		assert.equal(m.stats.holes, 0);
+	});
+
+	it('goes out as silence when the decoder cannot help', () => {
+		const m = new SpeakerMixer();
+		m.setConcealer('a', () => {
+			throw new Error('no');
+		});
+		for (let i = 0; i < 3; i++) {
+			m.push('a', marker(3000));
+			m.tick();
+		}
+		assert.equal(m.tick().pcm[0], 0);
+		assert.equal(m.stats.holes, 1);
+		assert.equal(m.stats.concealed, 0);
+	});
+});
+
+describe('per-speaker loudness', () => {
+	const sine = (amplitude) => Int16Array.from({ length: 480 }, (_, i) => Math.round(amplitude * Math.sin((2 * Math.PI * 440 * i) / 24000)));
+
+	it('raises a quiet speaker over a second or so, no further than the cap', () => {
+		const m = new SpeakerMixer({ agc: true });
+		let last = null;
+		for (let i = 0; i < 120; i++) {
+			m.push('a', sine(500));
+			last = m.tick();
+		}
+		const out = peakOf(last.pcm, 480);
+		assert.ok(out > 2500 && out <= 4000, `500 in, about 8x out: ${out}`);
+		const [level] = m.levels();
+		assert.equal(level.id, 'a');
+		assert.ok(level.levelDb < -35 && level.levelDb > -45, `their speech measured quiet: ${level.levelDb} dB`);
+		assert.equal(level.gainDb, 18);
+	});
+
+	it('lowers a loud speaker within a few frames, no further than the floor', () => {
+		const m = new SpeakerMixer({ agc: true });
+		let last = null;
+		for (let i = 0; i < 12; i++) {
+			m.push('a', sine(20000));
+			last = m.tick();
+		}
+		const out = peakOf(last.pcm, 480);
+		assert.ok(out > 8000 && out < 12000, `20000 in, half out: ${out}`);
+		assert.equal(m.levels()[0].gainDb, -6);
+	});
+
+	it('leaves the sound alone when it is off, and squashes rather than clips above the knee', () => {
+		const m = new SpeakerMixer();
+		m.push('a', sine(500));
+		assert.equal(peakOf(m.tick().pcm, 480), 500);
+		assert.equal(softClip(1000), 1000);
+		assert.ok(softClip(40000) > 26000 && softClip(40000) < 32767);
+		assert.equal(softClip(-1e6), -32767);
+	});
+});
+
+describe('the send loop s own numbers', () => {
+	it('count the frames the model took', () => {
+		const playback = new PlaybackQueue();
+		const out = { write: () => true, once: () => {} };
+		const live = { ready: true, sendAudio: () => true };
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback, output: out, getLive: () => live });
+		bridge.tick();
+		bridge.tick();
+		bridge.tick();
+		assert.equal(bridge.stats.ticks, 3);
+		assert.equal(bridge.stats.sent, 3);
+		assert.equal(bridge.sentRatio, null, 'nothing to say about the rate after 60 ms');
 	});
 });

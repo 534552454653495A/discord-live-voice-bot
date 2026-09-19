@@ -189,6 +189,8 @@ export function loadConfig(env = process.env) {
 		ownerPriority: bool(env.OWNER_PRIORITY, true),
 		// One voice at a time: while somebody holds the floor only their audio is sent (see SpeakerMixer).
 		floorControl: bool(env.FLOOR_CONTROL, true),
+		// Per-speaker loudness normalisation before the audio goes to the model (speech towards -20 dBFS).
+		agc: bool(env.AGC, true),
 		// Give the model silent context about who is speaking (name, owner or not, memory notes); off means it cannot tell people apart.
 		announceSpeaker: bool(env.ANNOUNCE_SPEAKER, true),
 		transcripts: bool(env.TRANSCRIPTS, true),

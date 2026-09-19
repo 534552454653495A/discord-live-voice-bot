@@ -52,6 +52,17 @@ export class AudioBridge {
 		this.nextAt = 0;
 		this.timer = null;
 		this.lastActive = '';
+		// How the 20 ms loop is keeping time: frames the model took, the wall clock those spanned (gaps
+		// of a second or more, a reconnect, left out), the latest a tick ever ran, and how often the loop
+		// had to run more than one tick to catch up. sent * 20 ms against sentSpanMs is the test of whether
+		// this side sends audio at the rate of the clock; the transcript's drift is measured against it.
+		this.stats = { ticks: 0, sent: 0, sentSpanMs: 0, lastSentAt: 0, maxLateMs: 0, bursts: 0, realigns: 0 };
+	}
+
+	/** Audio sent per wall-clock second, as a ratio (1 = exactly real time); null until there is enough of it. */
+	get sentRatio() {
+		if (this.stats.sentSpanMs < 1000) return null;
+		return (this.stats.sent * FRAME_MS) / this.stats.sentSpanMs;
 	}
 
 	get running() {
@@ -74,6 +85,14 @@ export class AudioBridge {
 		const { pcm, active, present, priority, others } = this.mixer.tick();
 		const live = this.getLive();
 		const sent = Boolean(live?.ready && live.sendAudio(pcm));
+		this.stats.ticks++;
+		if (sent) {
+			const now = Date.now();
+			const gap = now - this.stats.lastSentAt;
+			if (this.stats.lastSentAt && gap < 1000) this.stats.sentSpanMs += gap;
+			this.stats.lastSentAt = now;
+			this.stats.sent++;
+		}
 		this.onFrame?.({ priority, active, present, others, sent, pcm });
 		// The "who is speaking" debug line is printed by the session (GuildSession.logSpeaking), which can
 		// turn an id into a name; the bridge cannot, and printing raw ids here was most of the debug log.
@@ -141,12 +160,20 @@ export class AudioBridge {
 		this.nextAt = Date.now();
 		const loop = () => {
 			const now = Date.now();
+			const late = now - this.nextAt;
+			if (late > this.stats.maxLateMs) this.stats.maxLateMs = late;
 			// Long pause (GC, sleep, a blocked event loop): do not burst out the missed frames, realign instead.
-			if (now - this.nextAt > 1000) this.nextAt = now;
+			if (late > 1000) {
+				this.nextAt = now;
+				this.stats.realigns++;
+			}
+			let ran = 0;
 			while (this.nextAt <= now) {
 				this.tick();
 				this.nextAt += FRAME_MS;
+				ran++;
 			}
+			if (ran > 1) this.stats.bursts++;
 			this.timer = setTimeout(loop, Math.max(0, this.nextAt - Date.now()));
 		};
 		loop();

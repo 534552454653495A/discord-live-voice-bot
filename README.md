@@ -67,8 +67,16 @@ Discord voice  ◀──Opus──  encode  ◀── PlaybackQueue ◀───
                                                                     └──────────────────────────────┘
 ```
 
-The bot never sends audio through ffmpeg on the voice path — resampling and mixing are small integer
-routines in `src/audio.js`, which is what keeps the loop inside one 20 ms frame.
+**The sound.** What the transcriber hears is decided on this side before the model hears anything, so
+the path from Discord to the socket is treated as a thing of its own. Opus is decoded straight to 24 kHz
+mono inside the codec (nothing above the new Nyquist is synthesised, so there is nothing to alias and no
+resampler to get wrong); a packet that is late or lost mid-sentence is filled by the decoder's own
+concealment for a few frames instead of going out as a click; every speaker's speech is brought towards
+the same loudness (`AGC`) so a quiet microphone is not a mumbled transcript; and when the floor passes to
+somebody whose first frames were being discarded, those frames go out first, because to a transcriber the
+onset of a word is the word. Nothing on the voice path goes through ffmpeg — it is small integer routines
+in `src/audio.js`, which is what keeps the loop inside one 20 ms frame — and the path reports on itself
+(see Self-diagnosis). `TRACE_AUDIO=1` writes exactly what was sent, to be listened to.
 
 **Who said what.** The model hears one stream and cannot tell voices apart; the bot can, and it makes
 sure there is only one voice to tell. *Floor control* (`FLOOR_CONTROL`, on by default): while somebody
@@ -249,7 +257,10 @@ caps requests per session; `JEV=0` turns it off, `JEV_REPLY_GATE=0` leaves only 
 Every five minutes, when a live session closes and when the bot stops, the session reports on itself in a
 few log lines (and one panel event): the drift of the transcript's clock, the share of fragments the audio
 could place, the lines nobody owned, the gate's refusals with their reasons, Jev's verdicts and latency, the
-slow tools — with a warning when the drift is large or most lines belong to nobody.
+slow tools, and the audio path itself — audio sent against the wall clock (the test of whether the drift
+starts on this side), how late the 20 ms loop has run, holes mid-sentence and how many the decoder filled,
+frames a full queue threw away, and every speaker's measured level with the gain in effect — with a warning
+when the drift is large, most lines belong to nobody, the send rate is off the clock or holes are frequent.
 
 `TRACE=1` turns on the flight recorder: who the mixer heard on each frame (one record per change of
 voices), where the transcript put every fragment and where it was looked up, and every decision as it was
@@ -273,6 +284,10 @@ was audible, and positions on a clock that is not ours. The steps that raise it 
 are planned:
 
 - **Floor control** (done): send one voice, and the overlap that every downstream step is worst at is gone.
+- **The sound as a path of its own** (done): decode in the codec at the model's rate, conceal lost packets,
+  normalise every speaker's loudness, never lose a word's onset to a handover, and measure all of it.
+- **The transcript's clock, settled**: the send rate is now measured against the wall clock; if it is exact,
+  the ~1.3 % drift is the far end's alone and the model of it stays; if it is not, the loop is fixed instead.
 - **Per-person adaptive voice detection**: energy in dB against a tracked noise floor per person, instead of
   one absolute peak threshold for every microphone — a quiet speaker is a speaker, a fan is not.
 - **Fragment assignment as inference**: a sticky hidden-Markov path over a line's fragments instead of a
@@ -307,6 +322,7 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | `OWNER_ID` | *(empty)* | The only voice that may use admin tools; empty disables them |
 | `OWNER_PRIORITY` | `1` | While the owner speaks, only their audio is sent to the model |
 | `FLOOR_CONTROL` | `1` | One voice at a time: only the floor holder is sent to the model |
+| `AGC` | `1` | Per-speaker loudness: speech towards −20 dBFS before it is sent (+18 / −6 dB at most) |
 | `RESEARCH_MODEL` | *(empty)* | Enables the full tool set and web search through the Responses API |
 | `DAILY_LIVE_SECONDS` | `0` | Daily realtime budget; `0` is unlimited |
 | `MUSIC_VOLUME` / `MUSIC_DUCK_VOLUME` | `35` / `12` | Music level, and level while the bot speaks |

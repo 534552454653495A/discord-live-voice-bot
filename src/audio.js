@@ -34,46 +34,31 @@ export function mixInto(out, src, count = src.length, gain = 1) {
 	}
 }
 
-// The low-pass in front of the 48 kHz -> 24 kHz decimation: 15 taps, a Hamming-windowed sinc cut off at
-// 12 kHz, unity gain in Q15. The two-tap average it replaces took 3 dB off at the new Nyquist and let
-// everything between 12 and 24 kHz -- the hiss of "s", "ş" and "f" in a fullband Opus stream -- fold
-// down into the band the transcriber listens to, which is one of the ways "adamsın" can come back as
-// "ağlar mısın". This one: -6 dB at 12 kHz, -26 dB at 16 kHz, -47 dB at 20 kHz.
-const HALF_BAND = Int32Array.from([-120, 0, 530, 0, -2242, 0, 9993, 16446, 9993, 0, -2242, 0, 530, 0, -120]);
-const HALF_BAND_HISTORY = HALF_BAND.length - 1;
-
-/** The filter's memory between frames, one per stream: the last few mono samples of the previous frame. */
-export function downsampleState() {
-	return { history: new Int32Array(HALF_BAND_HISTORY), scratch: null };
+/**
+ * The decoder's Buffer as Int16Array, copied: a Buffer from the pool can start at an odd byte and a
+ * view over it would throw, and the mixer's ring and the local ear both keep what they are given.
+ */
+export function int16From(buf) {
+	return new Int16Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + (buf.length & ~1)));
 }
 
-/**
- * Buffer(s16le stereo 48k) -> Int16Array(mono 24k): channel downmix, half-band low-pass, decimate by 2.
- * `state` (downsampleState) carries the filter across frames so a frame boundary is not a click; without
- * one each call starts from silence, which is fine for a buffer on its own.
- */
-export function stereo48kToMono24k(pcm, state = null) {
-	const frames = pcm.length >> 2; // stereo frames
-	const out = new Int16Array(frames >> 1);
-	const own = state ?? downsampleState();
-	if (!own.scratch || own.scratch.length < frames + HALF_BAND_HISTORY) own.scratch = new Int32Array(frames + HALF_BAND_HISTORY);
-	const x = own.scratch;
-	x.set(own.history, 0);
-	for (let i = 0; i < frames; i++) {
-		const at = i * 4;
-		x[HALF_BAND_HISTORY + i] = (pcm.readInt16LE(at) + pcm.readInt16LE(at + 2)) >> 1;
-	}
-	for (let i = 0; i < out.length; i++) {
-		// Output i is the filter centred on input sample 2i - 7: a constant delay of a third of a
-		// millisecond, and no drift.
-		const base = 2 * i;
-		let acc = 0;
-		for (let k = 0; k < HALF_BAND.length; k++) acc += HALF_BAND[k] * x[base + k];
-		const y = acc >> 15;
-		out[i] = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
-	}
-	own.history.set(x.subarray(frames, frames + HALF_BAND_HISTORY));
-	return out;
+/** Root mean square of the first `count` samples. */
+export function rmsOf(samples, count = samples.length) {
+	if (count <= 0) return 0;
+	let acc = 0;
+	for (let i = 0; i < count; i++) acc += samples[i] * samples[i];
+	return Math.sqrt(acc / count);
+}
+
+// Above the knee a sample is squashed, not cut: a loud syllable through the gain comes out rounded
+// instead of as the buzz of a flat top.
+const SOFT_KNEE = 26000;
+export function softClip(v) {
+	const a = v < 0 ? -v : v;
+	if (a <= SOFT_KNEE) return v | 0;
+	const y = SOFT_KNEE + (a - SOFT_KNEE) * 0.25;
+	const c = y > 32767 ? 32767 : y;
+	return (v < 0 ? -c : c) | 0;
 }
 
 /**
@@ -128,14 +113,16 @@ export class Ring {
 		return this.cap - this.size;
 	}
 
+	/** Appends; on overflow the oldest samples go. Returns how many were dropped, so that a full ring is counted. */
 	push(src) {
 		const n = src.length;
-		if (n <= 0) return;
+		if (n <= 0) return 0;
 		if (n >= this.cap) {
+			const dropped = this.size + n - this.cap;
 			this.buf.set(src.subarray(n - this.cap), 0);
 			this.r = 0;
 			this.size = this.cap;
-			return;
+			return dropped;
 		}
 		const w = (this.r + this.size) % this.cap;
 		const first = Math.min(n, this.cap - w);
@@ -146,7 +133,9 @@ export class Ring {
 			const drop = this.size - this.cap;
 			this.r = (this.r + drop) % this.cap;
 			this.size = this.cap;
+			return drop;
 		}
+		return 0;
 	}
 
 	/** Read up to `max` samples into `dst`; returns how many were written. */
@@ -213,6 +202,24 @@ const BARGE_FRAMES = 75;
 // the live ones queue behind them until they pause. Nothing is lost, and the stream stays one frame
 // per tick. 240 ms: the holder's hold after their last loud frame, and the onset on top of it.
 const PREROLL_FRAMES = 12;
+// A packet late or lost in the middle of a sentence used to go out as 20 ms of nothing: a click and a
+// missing syllable, and the transcriber guessing the word. The decoder can make up a frame from what it
+// heard last (Opus packet loss concealment); that is used for up to this many frames in a row, then the
+// gap is real.
+const CONCEAL_FRAMES = 3;
+// A ring this deep at tick time means that speaker's audio is running behind by that much.
+const DEEP_FRAMES = 3;
+// Per-speaker loudness: one person's quiet microphone was arriving at a fifth of the level of the next
+// person's, and the transcriber hears the mix. Speech is brought towards -20 dBFS RMS, slowly up (a quiet
+// person is raised over a second or so), quickly down (a shout is caught within a few frames), by no
+// more than +18 / -6 dB, and squashed above the knee rather than clipped. Only speech moves the estimate,
+// so a pause does not pump the gain.
+const AGC_TARGET_RMS = 3277; // -20 dBFS
+const AGC_MAX_GAIN = 8;
+const AGC_MIN_GAIN = 0.5;
+const AGC_LEVEL_ALPHA = 0.05;
+const AGC_UP = 1.02;
+const AGC_DOWN = 0.8;
 const LONG_AGO = -1e9;
 
 /**
@@ -240,11 +247,19 @@ export class SpeakerMixer {
 		floorMaxFrames = FLOOR_MAX_FRAMES,
 		bargeFrames = BARGE_FRAMES,
 		prerollFrames = PREROLL_FRAMES,
+		agc = false,
+		concealFrames = CONCEAL_FRAMES,
 	} = {}) {
 		this.floorControl = floorControl;
 		this.floorMaxFrames = floorMaxFrames;
 		this.bargeFrames = bargeFrames;
 		this.prerollFrames = prerollFrames;
+		this.agc = agc;
+		this.concealFrames = concealFrames;
+		this.concealers = new Map(); // id -> () => Int16Array | null, the decoder's guess at a missing frame
+		// What the audio path did to the sound, for the health report: holes mid-sentence (and how many
+		// the decoder filled), frames a full ring threw away, and how deep a ring has been at tick time.
+		this.stats = { holes: 0, concealed: 0, overflow: 0, maxDepth: 0, deep: 0 };
 		this.floorId = null; // who holds the floor under floor control (or the priority speaker)
 		this.floorSince = 0;
 		this.floorTakeovers = 0; // how often the floor was taken from somebody still speaking
@@ -273,12 +288,66 @@ export class SpeakerMixer {
 	removeUser(id) {
 		this.rings.delete(id);
 		this.voices.delete(id);
+		this.concealers.delete(id);
+	}
+
+	/** How this speaker's decoder fills a frame that never arrived; null or a throw means it cannot. */
+	setConcealer(id, fn) {
+		if (typeof fn === 'function') this.concealers.set(id, fn);
+		else this.concealers.delete(id);
+	}
+
+	_conceal(id) {
+		const fn = this.concealers.get(id);
+		if (!fn) return null;
+		try {
+			const fill = fn();
+			return fill?.length ? fill : null;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * The gain this speaker's frame goes out with. The level estimate moves only on frames above the
+	 * speech bar, so silence and breath do not drag it down and pump the gain up.
+	 */
+	_gain(f) {
+		if (!this.agc || f.n <= 0) return 1;
+		const voice = f.voice;
+		if (f.peak >= this.speechPeak) {
+			const rms = rmsOf(f.buf, f.n);
+			voice.level = voice.level > 0 ? voice.level + (rms - voice.level) * AGC_LEVEL_ALPHA : rms;
+		}
+		if (voice.level <= 0) return voice.gain;
+		const wanted = Math.min(AGC_MAX_GAIN, Math.max(AGC_MIN_GAIN, AGC_TARGET_RMS / voice.level));
+		voice.gain = wanted < voice.gain ? Math.max(wanted, voice.gain * AGC_DOWN) : Math.min(wanted, voice.gain * AGC_UP);
+		return voice.gain;
+	}
+
+	/** Copies a frame into `out` through the gain. */
+	_write(out, samples, n, gain) {
+		if (gain === 1) {
+			out.set(n === samples.length ? samples : samples.subarray(0, n));
+			return;
+		}
+		for (let i = 0; i < n; i++) out[i] = softClip(samples[i] * gain);
+	}
+
+	/** Every speaker's measured speech level and the gain in effect, for the health report. */
+	levels() {
+		const list = [];
+		for (const [id, voice] of this.voices) {
+			if (voice.level <= 0) continue;
+			list.push({ id, levelDb: Math.round(20 * Math.log10(voice.level / 32768)), gainDb: Math.round(20 * Math.log10(voice.gain)) });
+		}
+		return list;
 	}
 
 	_voice(id) {
 		let voice = this.voices.get(id);
 		if (!voice) {
-			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false, recent: [], pending: [] };
+			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false, recent: [], pending: [], concealed: 0, level: 0, gain: 1 };
 			this.voices.set(id, voice);
 		}
 		return voice;
@@ -327,7 +396,8 @@ export class SpeakerMixer {
 			ring = new Ring(this.bufferSamples);
 			this.rings.set(id, ring);
 		}
-		ring.push(samples);
+		const dropped = ring.push(samples);
+		if (dropped > 0) this.stats.overflow += dropped / this.frameSamples;
 	}
 
 	/**
@@ -370,13 +440,14 @@ export class SpeakerMixer {
 	/** The floor holder's audio for this tick: queued frames first, then the live one. */
 	_emitFloor(out, f) {
 		const voice = f.voice;
+		const gain = this._gain(f);
 		if (voice.pending.length) {
 			if (f.n > 0) voice.pending.push(voice.recent[voice.recent.length - 1] ?? f.buf.slice(0, f.n)); // this tick, already kept
 			const frame = voice.pending.shift();
-			out.set(frame.subarray(0, Math.min(frame.length, this.frameSamples)));
+			this._write(out, frame, Math.min(frame.length, this.frameSamples), gain);
 			return;
 		}
-		if (f.n > 0) out.set(f.buf.subarray(0, f.n));
+		if (f.n > 0) this._write(out, f.buf, f.n, gain);
 	}
 
 	/**
@@ -394,7 +465,27 @@ export class SpeakerMixer {
 		const frames = [];
 		for (const [id, ring] of this.rings) {
 			const buf = this._buf(id);
-			const n = ring.length > 0 ? ring.read(buf, this.frameSamples) : 0;
+			const depth = ring.length / this.frameSamples;
+			if (depth > this.stats.maxDepth) this.stats.maxDepth = depth;
+			if (depth >= DEEP_FRAMES) this.stats.deep++;
+			let n = ring.length > 0 ? ring.read(buf, this.frameSamples) : 0;
+			const known = this._voice(id);
+			if (n > 0) {
+				known.concealed = 0;
+			} else if (known.wasSpeaking && this.frames - known.audioAt <= this.jitterFrames) {
+				// Mid-sentence and nothing arrived: a packet late or lost. The decoder's guess goes out in its
+				// place, a few frames at most; after that the silence is real.
+				this.stats.holes++;
+				if (known.concealed < this.concealFrames) {
+					const fill = this._conceal(id);
+					if (fill) {
+						n = Math.min(fill.length, this.frameSamples);
+						buf.set(fill.subarray(0, n));
+						known.concealed++;
+						this.stats.concealed++;
+					}
+				}
+			}
 			const peak = n > 0 ? peakOf(buf, n) : 0;
 			const voice = this._note(id, peak);
 			const speaking = this._speaking(voice);
@@ -456,7 +547,7 @@ export class SpeakerMixer {
 		const present = [];
 		const heard = [];
 		for (const f of frames) {
-			if (f.n > 0) mixInto(out, f.buf, f.n, 1);
+			if (f.n > 0) mixInto(out, f.buf, f.n, this._gain(f));
 			if (f.peak > this.presencePeak) present.push(f.id);
 			if (f.speaking) heard.push({ id: f.id, energy: f.voice.energy });
 		}

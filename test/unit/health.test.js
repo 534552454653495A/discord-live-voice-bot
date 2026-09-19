@@ -69,3 +69,20 @@ describe('the session health report', () => {
 		assert.equal(health.report().length, 2);
 	});
 });
+
+describe('the audio line of the report', () => {
+	it('is there when the audio path reports, with a warning when the clock is off or the packets are', () => {
+		const health = new SessionHealth();
+		const audio = { holes: 3, concealed: 3, overflow: 0, maxDepth: 2, sent: 3000, sentRatio: 1.001, maxLateMs: 12, bursts: 1, levels: [{ id: 'a', name: 'Ada', levelDb: -31, gainDb: 11 }] };
+		const lines = health.report({ audio });
+		assert.equal(lines.length, 3, lines.join('\n'));
+		assert.match(lines[2], /Ada -31 dB \(\+11 dB\)/);
+		assert.match(lines[2], /100\.1/);
+		const off = health.report({ audio: { ...audio, sentRatio: 0.9, holes: 200, concealed: 100 } });
+		assert.equal(off.length, 5, off.join('\n'));
+		assert.match(off[3], /90/);
+		assert.match(off[4], /200/);
+		const young = health.report({ audio: { ...audio, sentRatio: 0.9, sent: 100 } });
+		assert.equal(young.length, 3, 'the rate means nothing before 30 s of audio');
+	});
+});

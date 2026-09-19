@@ -13,6 +13,12 @@ const DRIFT_WARN_MS = 3000;
 // the words at all.
 const UNKNOWN_WARN_PCT = 40;
 const UNKNOWN_WARN_MIN_LINES = 10;
+// The send loop's own rate against the clock: past this the transcript's drift is (partly) ours.
+const AUDIO_RATE_WARN = 0.02;
+const AUDIO_RATE_MIN_FRAMES = 1500; // 30 s of audio before the rate means anything
+// Holes mid-sentence: a few are jitter; this many is packets not arriving.
+const HOLES_WARN_MIN = 50;
+const HOLES_WARN_FRACTION = 0.02;
 
 const pct = (part, total) => (total ? Math.round((part / total) * 100) : 0);
 const median = (list) => {
@@ -155,7 +161,7 @@ export class SessionHealth {
 	 * The report, as lines of text in the active locale: the numbers, then the warnings that are worth
 	 * one line each. `latency` is the response latency summary the session already keeps.
 	 */
-	report({ why = '', latency = '', takeovers = 0 } = {}) {
+	report({ why = '', latency = '', takeovers = 0, audio = null } = {}) {
 		const s = this.snapshot();
 		const lines = [
 			t('runtime.health_summary', {
@@ -196,6 +202,31 @@ export class SessionHealth {
 			? s.slowTools.map((entry) => t('runtime.health_tool_item', { name: entry.name, count: entry.count, seconds: (entry.avgMs / 1000).toFixed(1) })).join(', ')
 			: t('runtime.health_none');
 		lines.push(t('runtime.health_latency', { latency: latency || t('runtime.health_none'), tools }));
+		if (audio) {
+			const levels = (audio.levels ?? [])
+				.map((entry) => t('runtime.health_audio_level', { name: entry.name ?? entry.id, level: entry.levelDb, gain: (entry.gainDb >= 0 ? '+' : '') + entry.gainDb }))
+				.join(', ');
+			const ratio = Number.isFinite(audio.sentRatio) ? Math.round(audio.sentRatio * 1000) / 10 : '?';
+			const holes = audio.holes ?? 0;
+			lines.push(
+				t('runtime.health_audio', {
+					ratio,
+					late: Math.round(audio.maxLateMs ?? 0),
+					bursts: audio.bursts ?? 0,
+					holes,
+					concealed: audio.concealed ?? 0,
+					overflow: Math.round(audio.overflow ?? 0),
+					depth: Math.round(audio.maxDepth ?? 0),
+					levels: levels || t('runtime.health_none'),
+				}),
+			);
+			if (Number.isFinite(audio.sentRatio) && (audio.sent ?? 0) >= AUDIO_RATE_MIN_FRAMES && Math.abs(audio.sentRatio - 1) > AUDIO_RATE_WARN) {
+				lines.push(t('runtime.health_warn_audio_rate', { ratio }));
+			}
+			if (holes >= HOLES_WARN_MIN && audio.sent > 0 && holes / audio.sent > HOLES_WARN_FRACTION) {
+				lines.push(t('runtime.health_warn_holes', { holes, pct: Math.round((holes / audio.sent) * 100) }));
+			}
+		}
 		if (s.driftMs > DRIFT_WARN_MS) lines.push(t('runtime.health_warn_drift', { drift: s.driftMs }));
 		if (s.lines >= UNKNOWN_WARN_MIN_LINES && s.unknownPct > UNKNOWN_WARN_PCT) lines.push(t('runtime.health_warn_unknown', { unknown: s.unknownPct }));
 		return lines;

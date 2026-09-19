@@ -14,7 +14,7 @@ import {
 	joinVoiceChannel,
 } from '@discordjs/voice';
 import prism from 'prism-media';
-import { SAMPLES_PER_FRAME_48K, downsampleState, stereo48kToMono24k } from './audio.js';
+import { SAMPLES_PER_FRAME_24K, int16From } from './audio.js';
 import { AudioBridge } from './bridge.js';
 import { t } from './i18n/index.js';
 
@@ -48,6 +48,8 @@ function waitForState(connection, status, timeoutMs) {
 		connection.on('stateChange', onState);
 	});
 }
+
+const EMPTY_PACKET = Buffer.alloc(0);
 
 export class VoiceSession {
 	constructor({
@@ -290,12 +292,20 @@ export class VoiceSession {
 		if (!this.connection) return;
 
 		const opusStream = this.connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.Manual } });
-		const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: SAMPLES_PER_FRAME_48K });
-		const down = downsampleState(); // the anti-alias filter's memory, one per stream
+		// Decoded straight to what the model takes, 24 kHz mono: the codec synthesises nothing above the
+		// new Nyquist, so there is nothing to alias and no resampler to get wrong, and a stereo stream is
+		// folded to one channel inside the decoder. Half the work of decoding at 48 kHz and filtering.
+		const decoder = new prism.opus.Decoder({ rate: 24000, channels: 1, frameSize: SAMPLES_PER_FRAME_24K });
 		decoder.on('data', (pcm) => {
-			const mono = stereo48kToMono24k(pcm, down);
+			const mono = int16From(pcm);
 			this.mixer.push(userId, mono);
 			this.onUserPcm?.(userId, mono);
+		});
+		// A frame that never arrived: the decoder's own packet loss concealment, from what it heard last.
+		// Decoding nothing yields the decoder's maximum frame; the first 20 ms of it is the frame.
+		this.mixer.setConcealer?.(userId, () => {
+			const raw = decoder.encoder?.decode(EMPTY_PACKET);
+			return raw?.length ? int16From(raw).subarray(0, SAMPLES_PER_FRAME_24K) : null;
 		});
 		let failed = false;
 		const fail = (label, err) => {

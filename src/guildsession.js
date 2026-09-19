@@ -242,7 +242,7 @@ export class GuildSession {
 		// ---------------------------------------------------------------- audio path
 		// One voice at a time (see SpeakerMixer): the model hears a sum and cannot pull it apart, so while
 		// somebody holds the floor only their audio goes out. FLOOR_CONTROL=0 sends the sum as before.
-		this.mixer = new SpeakerMixer({ floorControl: cfg.floorControl });
+		this.mixer = new SpeakerMixer({ floorControl: cfg.floorControl, agc: cfg.agc });
 		if (cfg.floorControl) this.log(t('runtime.floor_control_on'));
 		if (cfg.ownerPriority && cfg.ownerId) this.mixer.setPriority(cfg.ownerId);
 		this.playback = new PlaybackQueue();
@@ -1968,10 +1968,24 @@ export class GuildSession {
 	 * the gate's refusals and their reasons, Jev's verdicts and latency, the slow tools -- said by the
 	 * bot itself, before anybody has to ask. Nothing is said until enough has happened to mean anything.
 	 */
+	/** What the audio path did to the sound, for the health report: the mixer's counters and the send loop's clock. */
+	audioStats() {
+		const bridge = this.voice?.bridge ?? null;
+		const mixer = this.mixer;
+		return {
+			...mixer?.stats,
+			levels: (mixer?.levels?.() ?? []).map((entry) => ({ ...entry, name: this.nameFor(entry.id) })),
+			sent: bridge?.stats.sent ?? 0,
+			sentRatio: bridge?.sentRatio ?? null,
+			maxLateMs: bridge?.stats.maxLateMs ?? 0,
+			bursts: bridge?.stats.bursts ?? 0,
+		};
+	}
+
 	reportHealth(why) {
 		if (this.health.fragmentCount - this.health.reportedAt < HEALTH_MIN_FRAGMENTS) return;
 		this.health.reportedAt = this.health.fragmentCount;
-		const lines = this.health.report({ why, latency: this.latency.summary().text, takeovers: this.mixer?.floorTakeovers ?? 0 });
+		const lines = this.health.report({ why, latency: this.latency.summary().text, takeovers: this.mixer?.floorTakeovers ?? 0, audio: this.audioStats() });
 		for (const line of lines) this.log(line);
 		this.activity.push({ kind: 'health', whoName: this.persona().name ?? 'bot', text: lines.join('\n'), meta: this.health.snapshot() });
 	}

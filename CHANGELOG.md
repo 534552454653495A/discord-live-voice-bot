@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] — 2026-09-19
+
+The audio path, taken as the thing that decides what the transcriber hears.
+
+### Changed
+
+- **The codec does the listening.** Discord's Opus is now decoded straight to 24 kHz mono, the format the
+  model takes. The decoder synthesises nothing above the new Nyquist, so there is nothing to alias and no
+  resampler on this side at all; measured against the 1.30.0 filter it is flat to 10 kHz where the filter
+  was already 2 dB down, exactly zero at 16 and 20 kHz where the filter left −26 and −47 dB, and a third
+  less work. The half-band filter of 1.30.0 is gone with the 2-tap average it replaced.
+
+### Added
+
+- **A packet that never arrived is filled by the decoder.** A late or lost packet mid-sentence used to go
+  out as 20 ms of nothing: a click and a missing syllable. Opus packet loss concealment now makes the frame
+  from what the decoder heard last (measured: full level, a join of 35 sample steps where the silence was
+  4600), for at most three frames in a row; after that the gap is real.
+- **Per-speaker loudness (`AGC`, on by default).** A quiet microphone arrived at a fifth of the level of the
+  next person's, and the transcriber hears the mix. Speech is brought towards −20 dBFS RMS: slowly up (a
+  quiet person is raised over a second or so, by +18 dB at most), quickly down (a shout is caught within a
+  few frames, −6 dB at most), squashed above the knee rather than clipped, and only speech moves the
+  estimate so a pause does not pump the gain. The VAD keeps judging the raw level.
+- **The audio path reports on itself.** The health report has an audio line: audio sent against the wall
+  clock (the test of whether the transcript's drift starts on this side), the latest a tick ever ran and how
+  often the loop had to burst to catch up, holes mid-sentence and how many the decoder filled, frames a
+  full ring threw away, the deepest a queue has been, and every speaker's measured speech level with the
+  gain in effect. Warnings when the send rate is more than 2 % off the clock or holes pass 2 % of frames.
+  The `TRACE_AUDIO` WAV says on close how many seconds of audio it holds against how many of wall clock.
+
 ## [1.30.0] — 2026-09-19
 
 ### Fixed
