@@ -18,6 +18,17 @@ import { Ducker } from './music.js';
 
 const JITTER_FRAMES = 4; // ~80 ms of pre-buffered model audio before playback starts
 const SILENCE = Buffer.alloc(STEREO_SAMPLES_PER_FRAME_48K * 2); // shared; the stream never mutates it
+// A wake this late means the event loop was blocked, and the packets that arrived meanwhile are still in
+// the poll phase, behind this timer: bursting now would send empty ticks and then find the rings full.
+// One setImmediate lets the poll phase deliver them first.
+const LATE_WAKE_MS = 2 * FRAME_MS;
+// The far end's buffer is given a lead of silence at the start of every session (and after a realign).
+// If it places each chunk at its arrival when its buffer is empty and never trims, every late chunk of
+// ours becomes padding in its timeline -- a mechanism that fits the drift the transcript's clock shows.
+// A lead is slack against that: lateness up to its length pads nothing. Harmless if the far end does not
+// pad; the attribution counts the frames like any others.
+const LEAD_FRAMES = 5;
+const LEAD_SILENCE = new Int16Array(SAMPLES_PER_FRAME_24K);
 
 export class AudioBridge {
 	constructor({
@@ -30,7 +41,9 @@ export class AudioBridge {
 		debug = false,
 		log = () => {},
 		onFrame = null,
+		clock = () => performance.now(),
 	}) {
+		this.clock = clock; // monotonic: a system clock step neither parks the loop nor bursts it
 		this.mixer = mixer;
 		this.playback = playback;
 		this.output = output;
@@ -56,13 +69,56 @@ export class AudioBridge {
 		// of a second or more, a reconnect, left out), the latest a tick ever ran, and how often the loop
 		// had to run more than one tick to catch up. sent * 20 ms against sentSpanMs is the test of whether
 		// this side sends audio at the rate of the clock; the transcript's drift is measured against it.
-		this.stats = { ticks: 0, sent: 0, sentSpanMs: 0, lastSentAt: 0, maxLateMs: 0, bursts: 0, realigns: 0 };
+		this.stats = { ticks: 0, sent: 0, extra: 0, lead: 0, sentSpanMs: 0, lastSentAt: 0, wakes: 0, lateMsTotal: 0, maxLateMs: 0, bursts: 0, realigns: 0, padMs: 0 };
+		this.padEnd = 0; // the far end's buffer end, in our clock, under the padding model (see LEAD_FRAMES)
+		this.leadDue = true; // the lead goes out on the first ready tick, and again after the session was not ready
+		this.gen = 0; // start() generation, so a deferred run after stop() does nothing
 	}
 
 	/** Audio sent per wall-clock second, as a ratio (1 = exactly real time); null until there is enough of it. */
 	get sentRatio() {
 		if (this.stats.sentSpanMs < 1000) return null;
 		return (this.stats.sent * FRAME_MS) / this.stats.sentSpanMs;
+	}
+
+	/** Under the padding model, the silence the far end would have added per second of ours, in ms; null until known. */
+	get padRate() {
+		if (this.stats.sentSpanMs < 1000) return null;
+		return (this.stats.padMs / this.stats.sentSpanMs) * 1000;
+	}
+
+	/** How late the loop wakes on average, in ms. */
+	get avgLateMs() {
+		return this.stats.wakes ? this.stats.lateMsTotal / this.stats.wakes : 0;
+	}
+
+	/** One send noted: the clock it spanned, the frames it carried, and what the padding model makes of its timing. */
+	noteSent(frames, lead = false) {
+		const now = this.clock();
+		if (!lead) {
+			const gap = now - this.stats.lastSentAt;
+			if (this.stats.sent > 0 && gap < 1000) this.stats.sentSpanMs += gap;
+			this.stats.lastSentAt = now;
+			this.stats.sent++;
+			if (frames > 1) this.stats.extra += frames - 1;
+		}
+		if (!this.padEnd || now - this.padEnd >= 1000) this.padEnd = now; // a second's gap is a reconnect, not padding
+		if (now > this.padEnd) {
+			this.stats.padMs += now - this.padEnd;
+			this.padEnd = now;
+		}
+		this.padEnd += frames * FRAME_MS;
+	}
+
+	/** The lead of silence: on the first ready tick, and again whenever the session comes back. */
+	sendLead(live) {
+		this.leadDue = false;
+		for (let i = 0; i < LEAD_FRAMES; i++) {
+			if (!live.sendAudio(LEAD_SILENCE)) return;
+			this.stats.lead++;
+			this.noteSent(1, true);
+			this.onFrame?.({ priority: false, active: [], present: [], others: [], sent: true, frames: 1, pcm: LEAD_SILENCE, lead: true });
+		}
 	}
 
 	get running() {
@@ -82,18 +138,14 @@ export class AudioBridge {
 
 	/** Runs exactly one 20 ms step. Returns what happened (used by tests). */
 	tick() {
-		const { pcm, active, present, priority, others } = this.mixer.tick();
+		const { pcm, active, present, priority, others, frames = 1 } = this.mixer.tick();
 		const live = this.getLive();
+		if (!live?.ready) this.leadDue = true;
+		else if (this.leadDue) this.sendLead(live);
 		const sent = Boolean(live?.ready && live.sendAudio(pcm));
 		this.stats.ticks++;
-		if (sent) {
-			const now = Date.now();
-			const gap = now - this.stats.lastSentAt;
-			if (this.stats.lastSentAt && gap < 1000) this.stats.sentSpanMs += gap;
-			this.stats.lastSentAt = now;
-			this.stats.sent++;
-		}
-		this.onFrame?.({ priority, active, present, others, sent, pcm });
+		if (sent) this.noteSent(frames);
+		this.onFrame?.({ priority, active, present, others, sent, frames, pcm });
 		// The "who is speaking" debug line is printed by the session (GuildSession.logSpeaking), which can
 		// turn an id into a name; the bridge cannot, and printing raw ids here was most of the debug log.
 
@@ -157,16 +209,11 @@ export class AudioBridge {
 
 	start() {
 		if (this.timer) return;
-		this.nextAt = Date.now();
-		const loop = () => {
-			const now = Date.now();
-			const late = now - this.nextAt;
-			if (late > this.stats.maxLateMs) this.stats.maxLateMs = late;
-			// Long pause (GC, sleep, a blocked event loop): do not burst out the missed frames, realign instead.
-			if (late > 1000) {
-				this.nextAt = now;
-				this.stats.realigns++;
-			}
+		const gen = ++this.gen;
+		this.nextAt = this.clock();
+		const run = () => {
+			if (gen !== this.gen) return;
+			const now = this.clock();
 			let ran = 0;
 			while (this.nextAt <= now) {
 				this.tick();
@@ -174,12 +221,33 @@ export class AudioBridge {
 				ran++;
 			}
 			if (ran > 1) this.stats.bursts++;
-			this.timer = setTimeout(loop, Math.max(0, this.nextAt - Date.now()));
+			this.timer = setTimeout(loop, Math.max(0, this.nextAt - this.clock()));
 		};
+		const loop = () => {
+			if (gen !== this.gen) return;
+			const now = this.clock();
+			const late = now - this.nextAt;
+			this.stats.wakes++;
+			if (late > 0) this.stats.lateMsTotal += late;
+			if (late > this.stats.maxLateMs) this.stats.maxLateMs = late;
+			if (late > 1000) {
+				// Long pause (GC, sleep, a blocked event loop): do not burst out the missed frames, realign instead.
+				this.nextAt = now;
+				this.stats.realigns++;
+				this.leadDue = true; // the far end's slack is spent; a fresh lead
+			} else if (late >= LATE_WAKE_MS) {
+				// The packets that arrived during the stall are behind this timer: let them in, then catch up.
+				setImmediate(run);
+				return;
+			}
+			run();
+		};
+		this.timer = setTimeout(loop, 0);
 		loop();
 	}
 
 	stop() {
+		this.gen++;
 		if (this.timer) clearTimeout(this.timer);
 		this.timer = null;
 		this.primed = false;

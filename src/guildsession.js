@@ -242,7 +242,7 @@ export class GuildSession {
 		// ---------------------------------------------------------------- audio path
 		// One voice at a time (see SpeakerMixer): the model hears a sum and cannot pull it apart, so while
 		// somebody holds the floor only their audio goes out. FLOOR_CONTROL=0 sends the sum as before.
-		this.mixer = new SpeakerMixer({ floorControl: cfg.floorControl, agc: cfg.agc });
+		this.mixer = new SpeakerMixer({ floorControl: cfg.floorControl, agc: cfg.agc, primeFrames: cfg.primeFrames });
 		if (cfg.floorControl) this.log(t('runtime.floor_control_on'));
 		if (cfg.ownerPriority && cfg.ownerId) this.mixer.setPriority(cfg.ownerId);
 		this.playback = new PlaybackQueue();
@@ -1977,8 +1977,12 @@ export class GuildSession {
 			levels: (mixer?.levels?.() ?? []).map((entry) => ({ ...entry, name: this.nameFor(entry.id) })),
 			sent: bridge?.stats.sent ?? 0,
 			sentRatio: bridge?.sentRatio ?? null,
+			padRate: bridge?.padRate ?? null,
+			avgLateMs: bridge?.avgLateMs ?? 0,
 			maxLateMs: bridge?.stats.maxLateMs ?? 0,
 			bursts: bridge?.stats.bursts ?? 0,
+			lead: bridge?.stats.lead ?? 0,
+			extra: bridge?.stats.extra ?? 0,
 		};
 	}
 

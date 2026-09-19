@@ -14,7 +14,8 @@ import { SAMPLES_PER_FRAME_24K, SpeakerMixer } from '../../src/audio.js';
 // hand the resulting frames to the real attribution, then feed transcript fragments in the way the
 // realtime API delivers them (as deltas with their own start/end) and read what the model was told.
 
-const ENV = { DISCORD_TOKEN: 't', GUILD_ID: 'g', CHANNEL_ID: 'g-voice', OPENAI_API_KEY: 'k', OWNER_ID: 'owner' };
+// PRIME_FRAMES 1: what a test pushes on a tick comes out on that tick, so the positions it writes are the audio's.
+const ENV = { DISCORD_TOKEN: 't', GUILD_ID: 'g', CHANNEL_ID: 'g-voice', OPENAI_API_KEY: 'k', OWNER_ID: 'owner', PRIME_FRAMES: '1' };
 
 // The accounts behind the display names, so that a test can make two people share a name.
 const ACCOUNTS = { owner: 'serefsiz', guest: 'pompomlatte', third: 'itsbluzerxs' };

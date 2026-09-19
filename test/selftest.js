@@ -2737,9 +2737,10 @@ await checkAsync('mixer -> model: every tick sends a 20 ms frame, silence includ
 	mixer.push('a', new Int16Array(SAMPLES_PER_FRAME_24K).fill(1234));
 	const result = bridge.tick();
 	assert.equal(result.sent, true);
-	assert.equal(sent.length, 1);
-	assert.equal(sent[0][0], 1234);
-	assert.equal(sent[0].length, SAMPLES_PER_FRAME_24K);
+	assert.equal(sent.length, 6, 'the lead of five silent frames, then the frame');
+	assert.ok(sent.slice(0, 5).every((frame) => frame.every((v) => v === 0)));
+	assert.equal(sent[5][0], 1234);
+	assert.equal(sent[5].length, SAMPLES_PER_FRAME_24K);
 	// with no model output, silence is written to Discord (an unbroken stream)
 	assert.equal(chunks.length, 1);
 	assert.equal(chunks[0].length, SAMPLES_PER_FRAME_48K * 4);

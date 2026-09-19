@@ -200,8 +200,19 @@ const BARGE_FRAMES = 75;
 // "adamsın" without its "a" is anybody's guess. So the last few frames of every speaker are kept, and
 // when the floor passes to somebody whose frames were being discarded, those frames go out first and
 // the live ones queue behind them until they pause. Nothing is lost, and the stream stays one frame
-// per tick. 240 ms: the holder's hold after their last loud frame, and the onset on top of it.
-const PREROLL_FRAMES = 12;
+// per tick. 360 ms: the holder's hold after their last loud frame, the frames the decoder may have made
+// up for them, the jitter allowance, and the onset on top of it -- measured, 240 ms lost two frames of
+// the newcomer's onset at a warm handover.
+const PREROLL_FRAMES = 18;
+// The tick that catches a talk-spurt's first packet is late by a random part of a frame (the Windows
+// timer alone is 0-16 ms). Reading that packet at once fixes the ring's phase to that tick, and the next
+// packet, on time, arrives just after the next tick: 20 ms of nothing as the second frame of the word.
+// Simulated on the real mixer, a quarter of two-second utterances got a hole at 2 ms of jitter and most
+// of them at 10 ms, nearly all in the first frames. So a spurt is read from its second frame: every
+// packet after that has a frame's margin over the tick's lateness. A spurt of a single frame is not held
+// for longer than PRIME_TICKS. Live the margin is two frames (PRIME_FRAMES in the config); the constructor's
+// default is none, so that what the tests push on one tick comes out on that tick.
+const PRIME_TICKS = 1;
 // A packet late or lost in the middle of a sentence used to go out as 20 ms of nothing: a click and a
 // missing syllable, and the transcriber guessing the word. The decoder can make up a frame from what it
 // heard last (Opus packet loss concealment); that is used for up to this many frames in a row, then the
@@ -235,7 +246,7 @@ const LONG_AGO = -1e9;
 export class SpeakerMixer {
 	constructor({
 		frameSamples = SAMPLES_PER_FRAME_24K,
-		bufferFrames = 10,
+		bufferFrames = 50, // a second: only an event-loop stall fills it, and then it must hold what arrived
 		activityPeak = 50,
 		presencePeak = PRESENCE_PEAK,
 		speechPeak = SPEECH_PEAK,
@@ -249,7 +260,9 @@ export class SpeakerMixer {
 		prerollFrames = PREROLL_FRAMES,
 		agc = false,
 		concealFrames = CONCEAL_FRAMES,
+		primeFrames = 1,
 	} = {}) {
+		this.primeFrames = Math.max(1, primeFrames | 0);
 		this.floorControl = floorControl;
 		this.floorMaxFrames = floorMaxFrames;
 		this.bargeFrames = bargeFrames;
@@ -278,7 +291,7 @@ export class SpeakerMixer {
 		this.frames = 0;
 		this.priorityId = null;
 		this.tmp = new Int16Array(frameSamples);
-		this.out = new Int16Array(frameSamples);
+		this.out = new Int16Array(frameSamples * 2); // a backlog frame and the live one (see _emitFloor)
 	}
 
 	addUser(id) {
@@ -347,7 +360,7 @@ export class SpeakerMixer {
 	_voice(id) {
 		let voice = this.voices.get(id);
 		if (!voice) {
-			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false, recent: [], pending: [], concealed: 0, level: 0, gain: 1 };
+			voice = { loud: 0, speechAt: LONG_AGO, audioAt: LONG_AGO, energy: 0, runStart: LONG_AGO, wasSpeaking: false, recent: [], pending: [], concealed: 0, level: 0, gain: 1, primed: false, primeSince: LONG_AGO };
 			this.voices.set(id, voice);
 		}
 		return voice;
@@ -437,21 +450,34 @@ export class SpeakerMixer {
 		this.floorSince = this.frames;
 	}
 
-	/** The floor holder's audio for this tick: queued frames first, then the live one. */
+	/**
+	 * The floor holder's audio for this tick, and how many frames of it there are: one, or two while a
+	 * backlog is being paid back. The backlog is the pre-roll (see _takeFloor); paid back one frame a
+	 * tick it stayed the same length for the whole turn, and at the holder's pause the next speaker's
+	 * first frames were discarded while it drained -- the handover came 200 ms late and took a word start
+	 * with it. So two queued frames go out a tick, oldest first, the live frame joining the back of the
+	 * queue: in order, nothing dropped, and the backlog gone within its own length.
+	 */
 	_emitFloor(out, f) {
 		const voice = f.voice;
 		const gain = this._gain(f);
-		if (voice.pending.length) {
-			if (f.n > 0) voice.pending.push(voice.recent[voice.recent.length - 1] ?? f.buf.slice(0, f.n)); // this tick, already kept
-			const frame = voice.pending.shift();
-			this._write(out, frame, Math.min(frame.length, this.frameSamples), gain);
-			return;
+		const n = this.frameSamples;
+		if (!voice.pending.length) {
+			if (f.n > 0) this._write(out, f.buf, f.n, gain);
+			return 1;
 		}
-		if (f.n > 0) this._write(out, f.buf, f.n, gain);
+		if (f.n > 0) voice.pending.push(voice.recent[voice.recent.length - 1] ?? f.buf.slice(0, f.n)); // this tick, already kept
+		const first = voice.pending.shift();
+		this._write(out, first, Math.min(first.length, n), gain);
+		const second = voice.pending.shift();
+		if (!second) return 1;
+		this._write(out.subarray(n, 2 * n), second, Math.min(second.length, n), gain);
+		return 2;
 	}
 
 	/**
-	 * One 20 ms frame. Returns { pcm, active, present, priority, others }: active = who the frame's audio
+	 * One tick. Returns { pcm, frames, active, present, priority, others }: pcm = 20 ms of audio, or 40 ms
+	 * (frames = 2) while a handover's backlog is paid back; active = who the frame's audio
 	 * belongs to, present = whose voice is in the sound, others = who was speaking but was NOT sent (floor
 	 * control). The returned `pcm` is a shared buffer: the next tick overwrites it, so the caller must
 	 * consume it right away.
@@ -465,24 +491,37 @@ export class SpeakerMixer {
 		const frames = [];
 		for (const [id, ring] of this.rings) {
 			const buf = this._buf(id);
+			const known = this._voice(id);
 			const depth = ring.length / this.frameSamples;
 			if (depth > this.stats.maxDepth) this.stats.maxDepth = depth;
 			if (depth >= DEEP_FRAMES) this.stats.deep++;
-			let n = ring.length > 0 ? ring.read(buf, this.frameSamples) : 0;
-			const known = this._voice(id);
+			// A talk-spurt is read from its second frame (see PRIME_FRAMES), or after PRIME_TICKS if a second
+			// never comes. From then on the ring is read as it is: a frame of margin is in it.
+			if (!known.primed && ring.length > 0) {
+				if (known.primeSince === LONG_AGO) known.primeSince = this.frames;
+				if (this.primeFrames <= 1 || ring.length >= this.primeFrames * this.frameSamples || this.frames - known.primeSince >= PRIME_TICKS) {
+					known.primed = true;
+					known.primeSince = LONG_AGO;
+				}
+			}
+			let n = known.primed && ring.length > 0 ? ring.read(buf, this.frameSamples) : 0;
 			if (n > 0) {
 				known.concealed = 0;
-			} else if (known.wasSpeaking && this.frames - known.audioAt <= this.jitterFrames) {
-				// Mid-sentence and nothing arrived: a packet late or lost. The decoder's guess goes out in its
-				// place, a few frames at most; after that the silence is real.
-				this.stats.holes++;
-				if (known.concealed < this.concealFrames) {
-					const fill = this._conceal(id);
-					if (fill) {
-						n = Math.min(fill.length, this.frameSamples);
-						buf.set(fill.subarray(0, n));
-						known.concealed++;
-						this.stats.concealed++;
+			} else if (ring.length === 0) {
+				// Ran dry. At a spurt's end that is the end; the next spurt is read from its second frame again.
+				if (known.primed && !known.wasSpeaking) known.primed = false;
+				if ((known.wasSpeaking || known.loud > 0) && this.frames - known.audioAt <= this.jitterFrames) {
+					// Mid-word and nothing arrived: a packet late or lost. The decoder's guess goes out in its
+					// place, a few frames at most; after that the silence is real.
+					this.stats.holes++;
+					if (known.concealed < this.concealFrames) {
+						const fill = this._conceal(id);
+						if (fill) {
+							n = Math.min(fill.length, this.frameSamples);
+							buf.set(fill.subarray(0, n));
+							known.concealed++;
+							this.stats.concealed++;
+						}
 					}
 				}
 			}
@@ -508,8 +547,8 @@ export class SpeakerMixer {
 			const own = frames.find((f) => f.id === this.priorityId);
 			if (own && this._holdsFloor(own.voice)) {
 				this._takeFloor(this.priorityId, speakingBut(this.priorityId).length > 0);
-				this._emitFloor(out, own);
-				return { pcm: out, active: [this.priorityId], present: [this.priorityId], priority: true, others: speakingBut(this.priorityId) };
+				const sent = this._emitFloor(out, own);
+				return { pcm: out.subarray(0, sent * this.frameSamples), frames: sent, active: [this.priorityId], present: [this.priorityId], priority: true, others: speakingBut(this.priorityId) };
 			}
 		}
 
@@ -536,8 +575,8 @@ export class SpeakerMixer {
 			if (!holder && speaking.length) holder = speaking[0];
 			if (holder) {
 				this._takeFloor(holder.id, takeover);
-				this._emitFloor(out, holder);
-				return { pcm: out, active: [holder.id], present: [holder.id], priority: false, others: speakingBut(holder.id) };
+				const sent = this._emitFloor(out, holder);
+				return { pcm: out.subarray(0, sent * this.frameSamples), frames: sent, active: [holder.id], present: [holder.id], priority: false, others: speakingBut(holder.id) };
 			}
 		}
 
@@ -552,7 +591,7 @@ export class SpeakerMixer {
 			if (f.speaking) heard.push({ id: f.id, energy: f.voice.energy });
 		}
 		heard.sort((a, b) => b.energy - a.energy);
-		return { pcm: out, active: heard.map((entry) => entry.id), present, priority: false, others: [] };
+		return { pcm: out.subarray(0, this.frameSamples), frames: 1, active: heard.map((entry) => entry.id), present, priority: false, others: [] };
 	}
 }
 

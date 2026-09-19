@@ -19,6 +19,9 @@ const AUDIO_RATE_MIN_FRAMES = 1500; // 30 s of audio before the rate means anyth
 // Holes mid-sentence: a few are jitter; this many is packets not arriving.
 const HOLES_WARN_MIN = 50;
 const HOLES_WARN_FRACTION = 0.02;
+// Under the padding model (see bridge.js LEAD_FRAMES) our send cadence alone would move the far end's clock
+// this much per second: compare with the drift rate on the summary line.
+const PAD_WARN_MS_PER_S = 5;
 
 const pct = (part, total) => (total ? Math.round((part / total) * 100) : 0);
 const median = (list) => {
@@ -207,10 +210,13 @@ export class SessionHealth {
 				.map((entry) => t('runtime.health_audio_level', { name: entry.name ?? entry.id, level: entry.levelDb, gain: (entry.gainDb >= 0 ? '+' : '') + entry.gainDb }))
 				.join(', ');
 			const ratio = Number.isFinite(audio.sentRatio) ? Math.round(audio.sentRatio * 1000) / 10 : '?';
+			const pad = Number.isFinite(audio.padRate) ? Math.round(audio.padRate * 10) / 10 : '?';
 			const holes = audio.holes ?? 0;
 			lines.push(
 				t('runtime.health_audio', {
 					ratio,
+					pad,
+					avgLate: Math.round((audio.avgLateMs ?? 0) * 10) / 10,
 					late: Math.round(audio.maxLateMs ?? 0),
 					bursts: audio.bursts ?? 0,
 					holes,
@@ -225,6 +231,9 @@ export class SessionHealth {
 			}
 			if (holes >= HOLES_WARN_MIN && audio.sent > 0 && holes / audio.sent > HOLES_WARN_FRACTION) {
 				lines.push(t('runtime.health_warn_holes', { holes, pct: Math.round((holes / audio.sent) * 100) }));
+			}
+			if (Number.isFinite(audio.padRate) && (audio.sent ?? 0) >= AUDIO_RATE_MIN_FRAMES && audio.padRate >= PAD_WARN_MS_PER_S) {
+				lines.push(t('runtime.health_warn_cadence', { pad, rate: s.driftRate }));
 			}
 		}
 		if (s.driftMs > DRIFT_WARN_MS) lines.push(t('runtime.health_warn_drift', { drift: s.driftMs }));

@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0] — 2026-09-19
+
+What an independent audit of the audio path found, after 1.31.0 (four readers, one lens each, every
+finding argued against by a skeptic); three of its findings were real.
+
+### Fixed
+
+- **A handover's backlog is paid back within its own length.** The frames replayed when the floor passes
+  (1.30.0) were sent one a tick, so the queue stayed the same length for the whole turn, and at the
+  holder's pause the next speaker's first frames were discarded while it drained: the handover came
+  200 ms late and took a word start with it. Two queued frames now go out a tick, oldest first, the live
+  frame joining the back of the queue — in order, nothing dropped, the backlog gone within its own length.
+  The attribution counts the frames it is handed. The pre-roll itself is 360 ms (was 240): measured,
+  the shorter one lost two frames of the newcomer's onset at a warm handover.
+- **A talk-spurt is read from its second frame.** The tick that catches a spurt's first packet is late by
+  a random part of a frame, and the next packet, on time, lands just after the next tick: read at once,
+  the spurt's second frame was a hole — simulated on the real mixer, a quarter of two-second utterances
+  at 2 ms of jitter, most at 10 ms, nearly all in the first frames, where a word is decided. The first
+  packet now waits one tick for the second (`PRIME_FRAMES`, 2 by default; 1 turns it off); every packet after that has a
+  frame's margin. An onset hole is counted and concealed like any other.
+- **A late wake lets the packets in before it catches up.** After an event-loop stall, timers run before
+  the poll phase: the loop burst out empty ticks and then found the rings full and threw the oldest
+  away. A wake two frames late now yields once (setImmediate) so the datagrams that arrived during the
+  stall are decoded first, and the rings hold a second of audio (was 200 ms). The loop keeps time by a
+  monotonic clock, so a system clock step neither parks it nor bursts it.
+
+### Added
+
+- **A lead of silence, and the padding model.** If the far end places each chunk at its arrival when its
+  buffer is empty and never trims, every late chunk of ours becomes padding in its timeline — a mechanism
+  that fits the transcript's drift (it rose with load and while music played). Every live session now
+  starts with 100 ms of silence, slack against exactly that; and the bridge keeps the model's books from
+  its own send times. The health audio line shows the padding that model predicts per second beside the
+  drift rate it would explain, the loop's average lateness, and a warning when the two are in the same
+  league. The next session's report settles whose the drift is.
+
 ## [1.31.0] — 2026-09-19
 
 The audio path, taken as the thing that decides what the transcriber hears.

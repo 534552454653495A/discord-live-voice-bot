@@ -396,28 +396,47 @@ describe('the frames a newcomer lost while somebody else held the floor', () => 
 			if (i >= 12) m.push('b', marker(2000 + i)); // b starts over a at frame 12
 			m.tick();
 		}
+		// Every frame of every tick, in the order the model receives them.
+		const framesOf = (frame) => Array.from({ length: frame.frames ?? 1 }, (_, k) => frame.pcm[k * 480]);
 		const after = [];
 		for (let i = 20; i < 40; i++) {
 			m.push('b', marker(2000 + i)); // a has stopped sending
 			const frame = m.tick();
-			after.push({ who: frame.active[0] ?? null, v: frame.pcm[0] });
+			after.push({ who: frame.active[0] ?? null, frames: framesOf(frame) });
 		}
 		const first = after.findIndex((entry) => entry.who === 'b');
-		assert.ok(first > 0 && first <= 6, `b gets the floor once the frames of a have stopped: ${first}`);
-		const values = after.slice(first).map((entry) => entry.v);
+		assert.ok(first > 0 && first <= 7, `b gets the floor once the frames of a have stopped: ${first}`);
+		const values = after.slice(first).flatMap((entry) => entry.frames);
 		assert.ok(values[0] < 2000 + 20 + first, `the first thing sent is an earlier frame of b: ${values[0]}`);
 		for (let i = 1; i < values.length; i++) assert.equal(values[i], values[i - 1] + 1, 'and nothing after it is lost or reordered');
+		assert.ok(after.slice(first).some((entry) => entry.frames.length === 2), 'the backlog is paid back at two frames a tick');
 
-		const drained = [];
-		for (let i = 0; i < 16; i++) {
-			const frame = m.tick(); // b has stopped too
-			drained.push({ who: frame.active[0] ?? null, v: frame.pcm[0] });
+		assert.equal(values[values.length - 1], 2039, 'down to the last frame they sent, while they were still sending');
+		assert.equal(m.voices.get('b').pending.length, 0, 'nothing is left owed by then');
+		let who = 'b';
+		for (let i = 0; i < 16 && who !== null; i++) who = m.tick().active[0] ?? null; // b has stopped too
+		assert.equal(who, null, 'and then the floor is free');
+	});
+
+	it('are paid back within their own length, so the next handover is not late', () => {
+		const m = new SpeakerMixer({ floorControl: true });
+		for (let i = 0; i < 30; i++) {
+			m.push('a', marker(3000));
+			if (i >= 10) m.push('b', marker(2000 + i)); // b talks over a from frame 10
+			m.tick();
 		}
-		const queued = drained.filter((entry) => entry.who === 'b');
-		assert.ok(queued.length >= 5 && queued.length <= 12, `the queue drains while b keeps the floor: ${queued.length}`);
-		assert.equal(queued[queued.length - 1].v, 2039, 'down to the last frame they sent');
-		for (let i = 1; i < queued.length; i++) assert.equal(queued[i].v, queued[i - 1].v + 1);
-		assert.equal(drained[drained.length - 1].who, null, 'and then the floor is free');
+		let handover = -1;
+		let cleared = -1;
+		for (let i = 30; i < 80; i++) {
+			m.push('b', marker(2000 + i)); // a has stopped; b keeps talking
+			const frame = m.tick();
+			if (handover < 0 && frame.active[0] === 'b') handover = i;
+			if (handover >= 0 && cleared < 0 && m.voices.get('b').pending.length === 0) cleared = i;
+		}
+		assert.ok(handover > 0, 'b got the floor');
+		assert.ok(cleared - handover <= 18, `the backlog was gone within its own length: ${cleared - handover} ticks`);
+		const frame = m.tick();
+		assert.equal(frame.frames, 1, 'and b is live again, one frame a tick');
 	});
 
 	it('are not needed when the floor was free: the live frame goes straight out', () => {
@@ -480,7 +499,7 @@ describe('a packet that never arrived mid-sentence', () => {
 		}
 		const holes = [];
 		for (let i = 0; i < 5; i++) holes.push(m.tick().pcm[0]); // a's packets stop
-		assert.deepEqual(holes, [1234, 1234, 1234, 0, 0]);
+		assert.deepEqual(holes, [1234, 1234, 1234, 0, 0], 'three the decoder made, then silence');
 		assert.equal(asked, 3);
 		assert.equal(m.stats.holes, 5, 'every one of them was a hole; only three were filled');
 		assert.equal(m.stats.concealed, 3);
@@ -567,5 +586,125 @@ describe('the send loop s own numbers', () => {
 		assert.equal(bridge.stats.ticks, 3);
 		assert.equal(bridge.stats.sent, 3);
 		assert.equal(bridge.sentRatio, null, 'nothing to say about the rate after 60 ms');
+	});
+});
+
+describe('the first frame of a talk-spurt', () => {
+	const marker = (v) => new Int16Array(480).fill(v);
+
+	// The tick that catches the first packet is late by a random part of a frame, and the next packet,
+	// on time, lands just after the next tick: read at once, the spurt's second frame was a hole.
+	it('waits one tick for the second, and from then on the ring is read as it is', () => {
+		const m = new SpeakerMixer({ primeFrames: 2 });
+		m.push('a', marker(3001));
+		assert.equal(m.tick().pcm[0], 0, 'held');
+		m.push('a', marker(3002));
+		assert.equal(m.tick().pcm[0], 3001);
+		m.push('a', marker(3003));
+		assert.equal(m.tick().pcm[0], 3002, 'a frame of margin stays in the ring');
+		assert.equal(m.tick().pcm[0], 3003, 'a packet late by a tick is not a hole');
+		assert.equal(m.stats.holes, 0);
+	});
+
+	it('is not held for longer than one tick when no second one comes', () => {
+		const m = new SpeakerMixer({ primeFrames: 2 });
+		m.push('a', marker(3001));
+		assert.equal(m.tick().pcm[0], 0);
+		assert.equal(m.tick().pcm[0], 3001);
+	});
+
+	it('is sent at once when the margin is off, which is the constructor default', () => {
+		const m = new SpeakerMixer();
+		m.push('a', marker(3001));
+		assert.equal(m.tick().pcm[0], 3001);
+	});
+
+	it('is held again at the next spurt, not in the middle of one', () => {
+		const m = new SpeakerMixer({ primeFrames: 2 });
+		for (let i = 0; i < 4; i++) {
+			m.push('a', marker(3000 + i));
+			m.tick();
+		}
+		m.tick(); // the margin frame
+		const dry = m.tick(); // a hole mid-spurt: no decoder here, so silence, and a is still speaking
+		assert.equal(dry.pcm[0], 0);
+		assert.equal(m.stats.holes, 1);
+		m.push('a', marker(3010));
+		assert.equal(m.tick().pcm[0], 3010, 'read at once: still their turn');
+		for (let i = 0; i < 12; i++) m.tick(); // the spurt ends
+		m.push('a', marker(3020));
+		assert.equal(m.tick().pcm[0], 0, 'the next spurt is held for its second frame again');
+	});
+});
+
+describe('the lead and the padding model', () => {
+	const fakeLive = () => {
+		const live = { ready: true, sent: [], sendAudio: (pcm) => (live.sent.push(pcm.length), true) };
+		return live;
+	};
+	const out = { write: () => true, once: () => {} };
+
+	it('give the far end a lead of silence once per session, counted by the attribution like any frame', () => {
+		const live = fakeLive();
+		const frames = [];
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: out, getLive: () => live, onFrame: (f) => frames.push(f) });
+		bridge.tick();
+		bridge.tick();
+		assert.equal(live.sent.length, 7, 'five frames of lead, then the two ticks');
+		assert.equal(bridge.stats.lead, 5);
+		assert.equal(bridge.stats.sent, 2, 'the lead is not counted as sent audio against the clock');
+		assert.equal(frames.filter((f) => f.lead).length, 5);
+		assert.ok(frames.every((f) => f.sent && f.frames === 1));
+	});
+
+	it('measure what a far end that pads gaps and never trims would add', () => {
+		let now = 0;
+		const live = fakeLive();
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: out, getLive: () => live, clock: () => now });
+		bridge.leadDue = false; // no lead in this one: the model from a cold buffer
+		for (const at of [0, 20, 40, 75, 80, 100, 120]) {
+			now = at;
+			bridge.tick();
+		}
+		// 0..60 on time; 75 is 15 late (padding 15); 80 arrives before the buffer end of 95 (no padding);
+		// 100 before 115; 120 before 135.
+		assert.equal(bridge.stats.padMs, 15);
+		assert.equal(bridge.stats.sentSpanMs, 120);
+		assert.equal(bridge.padRate, null, 'not until a second of audio');
+	});
+
+	it('are absorbed by the lead: lateness up to its length pads nothing', () => {
+		let now = 0;
+		const live = fakeLive();
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: out, getLive: () => live, clock: () => now });
+		for (const at of [0, 20, 40, 75, 80]) {
+			now = at;
+			bridge.tick();
+		}
+		assert.equal(bridge.stats.padMs, 0, 'the lead of 100 ms took the 15 ms of lateness');
+	});
+
+	it('goes out again when the session comes back, not on every tick', () => {
+		const live = fakeLive();
+		let ready = true;
+		const bridge = new AudioBridge({ mixer: new SpeakerMixer(), playback: new PlaybackQueue(), output: out, getLive: () => ({ ...live, ready }) });
+		bridge.tick();
+		bridge.tick();
+		assert.equal(bridge.stats.lead, 5, 'a fresh live object on every call is still one session');
+		ready = false;
+		bridge.tick();
+		ready = true;
+		bridge.tick();
+		assert.equal(bridge.stats.lead, 10, 'back after a gap: a fresh lead');
+	});
+});
+
+describe('the attribution across a two-frame tick', () => {
+	it('advances the audio clock by the frames it was handed', () => {
+		const attribution = new SpeakerAttribution({ ownerId: 'o' });
+		attribution.onFrame({ active: ['a'], sent: true, frames: 2 });
+		assert.equal(attribution.audioMs, 40);
+		attribution.onFrame({ active: ['a'], sent: true });
+		assert.equal(attribution.audioMs, 60);
 	});
 });

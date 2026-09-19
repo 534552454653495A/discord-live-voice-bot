@@ -73,11 +73,16 @@ describe('the session health report', () => {
 describe('the audio line of the report', () => {
 	it('is there when the audio path reports, with a warning when the clock is off or the packets are', () => {
 		const health = new SessionHealth();
-		const audio = { holes: 3, concealed: 3, overflow: 0, maxDepth: 2, sent: 3000, sentRatio: 1.001, maxLateMs: 12, bursts: 1, levels: [{ id: 'a', name: 'Ada', levelDb: -31, gainDb: 11 }] };
+		const audio = { holes: 3, concealed: 3, overflow: 0, maxDepth: 2, sent: 3000, sentRatio: 1.001, padRate: 0.4, avgLateMs: 3.14, maxLateMs: 12, bursts: 1, levels: [{ id: 'a', name: 'Ada', levelDb: -31, gainDb: 11 }] };
 		const lines = health.report({ audio });
 		assert.equal(lines.length, 3, lines.join('\n'));
 		assert.match(lines[2], /Ada -31 dB \(\+11 dB\)/);
 		assert.match(lines[2], /100\.1/);
+		assert.match(lines[2], /0\.4/);
+		assert.match(lines[2], /3\.1/);
+		const uneven = health.report({ audio: { ...audio, padRate: 13.2 } });
+		assert.equal(uneven.length, 4, uneven.join('\n'));
+		assert.match(uneven[3], /13\.2/);
 		const off = health.report({ audio: { ...audio, sentRatio: 0.9, holes: 200, concealed: 100 } });
 		assert.equal(off.length, 5, off.join('\n'));
 		assert.match(off[3], /90/);

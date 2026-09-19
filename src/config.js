@@ -191,6 +191,8 @@ export function loadConfig(env = process.env) {
 		floorControl: bool(env.FLOOR_CONTROL, true),
 		// Per-speaker loudness normalisation before the audio goes to the model (speech towards -20 dBFS).
 		agc: bool(env.AGC, true),
+		// A talk-spurt is read from this many frames in (a frame's margin against a late packet); 1 = read at once.
+		primeFrames: num(env.PRIME_FRAMES, 2, { min: 1, max: 5 }),
 		// Give the model silent context about who is speaking (name, owner or not, memory notes); off means it cannot tell people apart.
 		announceSpeaker: bool(env.ANNOUNCE_SPEAKER, true),
 		transcripts: bool(env.TRANSCRIPTS, true),

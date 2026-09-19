@@ -175,7 +175,7 @@ export class SpeakerAttribution {
 	 * Called for every 20 ms audio frame (from the bridge).
 	 * `sent` = was the frame really appended to the Live session; the audio position only advances then.
 	 */
-	onFrame({ priority = false, active = [], present = null, sent = true } = {}) {
+	onFrame({ priority = false, active = [], present = null, sent = true, frames = 1 } = {}) {
 		this.seq++;
 		const activeIds = active.map((id) => String(id));
 		const ownerInMix = !priority && this.ownerId ? activeIds.includes(this.ownerId) : false;
@@ -204,8 +204,9 @@ export class SpeakerAttribution {
 		// has to mean alone in the sound, or somebody can speak quietly and have their words land under
 		// another person's name, with that person's authority.
 		const presentIds = Array.isArray(present) ? present.map((id) => String(id)) : ids;
-		this._track(this.audioMs, this.audioMs + this.frameMs, ids, presentIds);
-		this.audioMs += this.frameMs;
+		const span = Math.max(1, frames | 0) * this.frameMs; // two frames while a handover's backlog is paid back
+		this._track(this.audioMs, this.audioMs + span, ids, presentIds);
+		this.audioMs += span;
 	}
 
 	_track(startMs, endMs, ids, presentIds = ids) {

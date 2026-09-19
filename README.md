@@ -323,6 +323,7 @@ Every option lives in `.env` and is documented in [`.env.example`](.env.example)
 | `OWNER_PRIORITY` | `1` | While the owner speaks, only their audio is sent to the model |
 | `FLOOR_CONTROL` | `1` | One voice at a time: only the floor holder is sent to the model |
 | `AGC` | `1` | Per-speaker loudness: speech towards −20 dBFS before it is sent (+18 / −6 dB at most) |
+| `PRIME_FRAMES` | `2` | A talk-spurt is sent from this frame in: a frame's margin against a late packet; `1` = none |
 | `RESEARCH_MODEL` | *(empty)* | Enables the full tool set and web search through the Responses API |
 | `DAILY_LIVE_SECONDS` | `0` | Daily realtime budget; `0` is unlimited |
 | `MUSIC_VOLUME` / `MUSIC_DUCK_VOLUME` | `35` / `12` | Music level, and level while the bot speaks |
