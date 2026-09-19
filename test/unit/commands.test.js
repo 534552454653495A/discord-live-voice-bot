@@ -229,10 +229,10 @@ describe('parseVoiceCommand: the ways the owner asks for the voice back (tr)', (
 	// kapat" were said one after another to a bot the owner had told to be quiet, and none of them was
 	// a phrase the grammar knew -- so the deterministic route never fired and the bot stayed mute.
 	it('hears them all', () => {
+		const melis = [{ name: 'Melis' }];
 		for (const line of [
 			'melis konuş',
-			'konuş',
-			'konuşun',
+			'melis konuşun',
 			'konuşmaya devam et',
 			'melis artık konuşmaya devam edebilirsin',
 			'melis artık konuşabilirs',
@@ -245,8 +245,18 @@ describe('parseVoiceCommand: the ways the owner asks for the voice back (tr)', (
 			'sesini aç',
 			'susmayı bırak',
 		]) {
-			assert.deepEqual(turkish.parseVoiceCommand(line, [], trChannels), { type: 'quiet', value: 'off' }, line);
+			assert.deepEqual(turkish.parseVoiceCommand(line, melis, trChannels), { type: 'quiet', value: 'off' }, line);
 		}
+	});
+	// Heard live: the owner said "artık konuşma" (do not talk any more), the transcript delivered "Artık
+	// konuş", and the bot, told to be quiet six seconds earlier, spoke again. Giving the voice back is the
+	// direction the owner minds, so the bare word needs the bot's name next to it.
+	it('does not give the voice back on a bare "konuş" without the bot s name', () => {
+		for (const line of ['konuş', 'konuşun', 'artık konuş']) {
+			assert.equal(turkish.parseVoiceCommand(line, [{ name: 'Melis' }], trChannels), null, line);
+		}
+		assert.deepEqual(turkish.parseVoiceCommand('bot konuş', [], trChannels), { type: 'quiet', value: 'off' }, 'a generic name counts');
+		assert.deepEqual(turkish.parseVoiceCommand('konuşabilirsin', [], trChannels), { type: 'quiet', value: 'off' }, 'the longer forms need no name');
 	});
 	it('and the ways to switch it on by its name', () => {
 		for (const line of ['quiet ayarını aç', 'quiet aç', 'sessiz moda geç', 'sessiz modu aç', 'quiet on']) {

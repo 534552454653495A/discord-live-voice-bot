@@ -23,7 +23,7 @@ export default {
 	key_write_failed: 'The key could not be written to .env: {error}',
 	keys_updated: '[panel] keys updated: {keys} ({hints})',
 	keys_saved: 'Written to .env. A new voice session uses it right away; restart the bot for text and drawing.',
-	speaker_line_overlap: 'In the channel {names} spoke over each other and I cannot tell which of them said this: "{line}"',
+	speaker_line_overlap: 'In the channel {names} ran together or were handing over, and I cannot tell which of them said this: "{line}". Do not ask who said it; if nothing was asked of you, stay silent.',
 	window_shape_cumulative: '[transcript] the windows are cumulative: {straddled} of {total} fragments carried the previous one, so each is judged on the audio that is new since the last',
 	window_shape_per_fragment: '[transcript] the windows are per fragment: {straddled} of {total} overlapped the previous one',
 	speaker_line_unknown: 'Somebody in the channel said this and the audio does not say who: "{line}"',

@@ -23,7 +23,7 @@ export default {
 	key_write_failed: 'Anahtar .env dosyasına yazılamadı: {error}',
 	keys_updated: '[panel] anahtarlar güncellendi: {keys} ({hints})',
 	keys_saved: '.env dosyasına yazıldı. Yeni sesli oturum hemen kullanır; metin ve çizim için botu yeniden başlat.',
-	speaker_line_overlap: 'Kanalda {names} aynı anda konuştu, hangisinin söylediğini ayıramıyorum: "{line}"',
+	speaker_line_overlap: 'Kanalda {names} sesleri karıştı ya da söz aralarında geçiyordu, hangisinin dediğini ayıramıyorum: "{line}". Kimin dediğini sorma; sana bir şey sorulmadıysa sessiz kal.',
 	window_shape_cumulative: '[deşifre] zaman aralıkları kümülatif: {total} parçanın {straddled} tanesi öncekini de kapsıyordu, bu yüzden her parça yalnızca yeni sesi üzerinden değerlendiriliyor',
 	window_shape_per_fragment: '[deşifre] zaman aralıkları parça başına: {total} parçanın yalnızca {straddled} tanesi öncekiyle kesişti',
 	speaker_line_unknown: 'Kanalda biri şunu söyledi, sesten kim olduğu anlaşılmıyor: "{line}"',

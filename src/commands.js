@@ -645,6 +645,7 @@ const CHARACTER_SWITCH = (tRaw('grammar.character_switch') ?? []).map(rx);
 const LEAVE = rx(tRaw('grammar.leave'));
 const QUIET_ON = rx(tRaw('grammar.quiet')?.on);
 const QUIET_OFF = rx(tRaw('grammar.quiet')?.off);
+const QUIET_OFF_NAMED = rx(tRaw('grammar.quiet')?.off_named);
 const CHANNEL_SUFFIX = rx(tRaw('grammar.channel_suffix'));
 const FILLERS = rx(tRaw('grammar.fillers'));
 const MESSAGE_PREFIX = rx(tRaw('grammar.message_prefix'));
@@ -863,8 +864,22 @@ export function extractMusic(text) {
  * Quiet on/off. The state belongs to the application, so the words that switch it are matched here
  * and run without the model; the owner gate still decides whether those words were the owner's.
  */
-function extractQuiet(text) {
+/** Is one of the bot's names in the line: the active characters', or the generic ones ("bot")? */
+function namedIn(text, characters) {
+	const tokens = new Set(normalize(text).split(' ').filter(Boolean));
+	const names = [...(characters ?? []).map((character) => character?.name), ...(tRaw('runtime.wake_words') ?? [])];
+	return names.some((name) => name && tokens.has(normalize(String(name))));
+}
+
+/**
+ * Giving the voice back by mistake is the direction the owner minds -- they asked for silence -- so the
+ * way back on the bare word alone needs the bot's name next to it. The bare word is the one the
+ * transcript can hand over out of its own negation: "artık konuşma" (do not talk any more) arrived as
+ * "Artık konuş", six seconds after the owner had asked for quiet.
+ */
+function extractQuiet(text, characters = []) {
 	if (QUIET_OFF?.test(text)) return { type: 'quiet', value: 'off' };
+	if (QUIET_OFF_NAMED?.test(text) && namedIn(text, characters)) return { type: 'quiet', value: 'off' };
 	if (QUIET_ON?.test(text)) return { type: 'quiet', value: 'on' };
 	return null;
 }
@@ -898,7 +913,7 @@ export function parseVoiceCommand(text, characters = [], channels = { text: [], 
 	const music = extractMusic(line);
 	if (music) return music;
 
-	const quiet = extractQuiet(line);
+	const quiet = extractQuiet(line, characters);
 	if (quiet) return quiet;
 
 	const read = extractRead(line, channels.text ?? []);

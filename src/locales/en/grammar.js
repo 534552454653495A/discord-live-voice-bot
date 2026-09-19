@@ -65,6 +65,11 @@ export default {
 			pattern: '(?<![\\p{L}])(?:(?:you\\s+)?(?:can|may)\\s+(?:speak|talk)|(?:speak|talk)\\s+again)(?![\\p{L}])',
 			flags: 'iu',
 		},
+		// The bare word, only next to the bot's name ("Melis, talk").
+		off_named: {
+			pattern: '(?<![\\p{L}])(?:speak|talk)(?![\\p{L}])',
+			flags: 'iu',
+		},
 	},
 
 	// What may follow a channel name: the word that marks it as a channel.

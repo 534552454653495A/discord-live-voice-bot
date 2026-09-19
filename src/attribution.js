@@ -48,6 +48,9 @@ const EMPTY_SHARE = Object.freeze({ heardMs: 0, ranked: Object.freeze([]), id: n
 // missed five of the six. Widening it cannot put words in the wrong mouth, because a neighbourhood
 // holding two voices still names nobody.
 const NEAR_MS = 1500;
+// In a hand-off, the nearer voice has to be nearer by this much before the words are given to it: a
+// fragment sitting in the middle of the pause is anybody's.
+const CLOSE_MARGIN_MS = 250;
 
 const TURN_TTL_MS = 30_000; // the turn marker counts as stale after this long
 const UTTERANCE_GAP_MS = 1500; // fragments from the same person within this gap count as one utterance
@@ -358,8 +361,33 @@ export class SpeakerAttribution {
 		const near = this.speakerShareAt(startMs - NEAR_MS, to + NEAR_MS);
 		if (!near.ranked.length) return { id: null, confidence: 'unsure', reason: 'silence', solo: 0, share: 0, speakers: 0, ids: [], heardMs: 0 };
 		const ranked = this._rank(near, 'nearby');
-		// One voice either side of the pause is that voice's pause. Two voices either side says nothing.
-		return ranked.confidence === 'sure' ? { ...ranked, confidence: 'leaning' } : { ...ranked, id: null, confidence: 'unsure' };
+		// One voice either side of the pause is that voice's pause.
+		if (ranked.confidence === 'sure') return { ...ranked, confidence: 'leaning' };
+		// Two voices either side of it: a hand-off. One voice at a time is sent, so this is not an overlap
+		// -- the words are the tail of the one who stopped or the first word of the one who started, and
+		// they belong to whichever is nearer the pause. Equally near, and nobody is named.
+		const closest = this._closestSpeaker(startMs, to, ranked.ids);
+		if (closest) return { ...ranked, id: closest, confidence: 'leaning' };
+		return { ...ranked, id: null, confidence: 'unsure' };
+	}
+
+	/** Of these speakers, the one whose audio comes nearest to the stretch -- by a clear margin, or nobody. */
+	_closestSpeaker(from, to, ids) {
+		const distance = new Map();
+		for (let i = this._firstAfter(from - NEAR_MS); i < this.track.length; i++) {
+			const seg = this.track[i];
+			if (seg.startMs >= to + NEAR_MS) break;
+			const gap = seg.startMs > to ? seg.startMs - to : seg.endMs < from ? from - seg.endMs : 0;
+			for (const id of seg.ids) {
+				if (!ids.includes(id)) continue;
+				const known = distance.get(id);
+				if (known === undefined || gap < known) distance.set(id, gap);
+			}
+		}
+		const sorted = [...distance.entries()].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
+		if (!sorted.length) return null;
+		if (sorted.length > 1 && sorted[1][1] - sorted[0][1] < CLOSE_MARGIN_MS) return null;
+		return sorted[0][0];
 	}
 
 	_rank({ heardMs, ranked }, reason) {

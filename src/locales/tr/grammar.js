@@ -48,7 +48,14 @@ export default {
 			flags: 'iu',
 		},
 		off: {
-			pattern: '(?<![\\p{L}])(?:konu[şs](?:un|sana|ab[iı]l[iı]r\\p{L}*|maya\\s+devam(?:\\s+et\\p{L}*)?)?|devam\\s+edeb[iı]l[iı]r\\p{L}*|konu[şs]ma\\s+yasa[ğg][ıi]n[ıi]\\s+kald[ıi]r\\p{L}*|(?:sessizli[ğg]i|sessizlik\\s+ayar[ıi]n[ıi]|quiet(?:\\s+ayar[ıi]n[ıi])?|sessiz\\s+modu?)\\s+(?:kald[ıi]r\\p{L}*|kapat\\p{L}*|bitir\\p{L}*)|quiet\\s+off|ses[iı]n[iı]\\s+a[çc]\\p{L}*|sus(?:ma)?y[ıi]\\s+b[ıi]rak\\p{L}*)(?![\\p{L}])',
+			pattern: '(?<![\\p{L}])(?:konu[şs](?:ab[iı]l[iı]r\\p{L}*|maya\\s+devam(?:\\s+et\\p{L}*)?)|devam\\s+edeb[iı]l[iı]r\\p{L}*|konu[şs]ma\\s+yasa[ğg][ıi]n[ıi]\\s+kald[ıi]r\\p{L}*|(?:sessizli[ğg]i|sessizlik\\s+ayar[ıi]n[ıi]|quiet(?:\\s+ayar[ıi]n[ıi])?|sessiz\\s+modu?)\\s+(?:kald[ıi]r\\p{L}*|kapat\\p{L}*|bitir\\p{L}*)|quiet\\s+off|ses[iı]n[iı]\\s+a[çc]\\p{L}*|sus(?:ma)?y[ıi]\\s+b[ıi]rak\\p{L}*)(?![\\p{L}])',
+			flags: 'iu',
+		},
+		// The bare word alone, which the transcript can hand over out of "konuşma" (do not talk): it gives the
+		// voice back only next to the bot's name ("Melis konuş"). Heard live: "artık konuşma" arrived as
+		// "Artık konuş" and the bot, told to be quiet six seconds earlier, spoke again.
+		off_named: {
+			pattern: '(?<![\\p{L}])konu[şs](?:un|sana)?(?![\\p{L}])',
 			flags: 'iu',
 		},
 	},

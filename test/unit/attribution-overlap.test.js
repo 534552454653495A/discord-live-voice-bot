@@ -177,3 +177,21 @@ describe('the gate in front of the admin tools', () => {
 		assert.equal(a.track[0].solo, true);
 	});
 });
+
+describe('a fragment in the hand-off between two people', () => {
+	// One voice at a time is sent, so two voices either side of a pause is not an overlap: the words are
+	// the tail of the one who stopped or the first word of the one who started. Heard live: "Melis sus"
+	// fell in such a pause, was given to nobody, and the owner had to say it again.
+	it('goes to whoever is nearer the pause, and to nobody from the middle of it', () => {
+		const a = new SpeakerAttribution({ ownerId: 'owner' });
+		frames(a, ['x'], 30); // 0 - 600 ms
+		frames(a, [], 20); // 600 - 1000 ms: the pause
+		frames(a, ['y'], 30); // 1000 - 1600 ms
+		const tail = a.resolveSpeaker(620, 720);
+		assert.equal(tail.id, 'x', 'right after x stopped: x s tail');
+		assert.equal(tail.confidence, 'leaning');
+		assert.equal(a.resolveSpeaker(900, 980).id, 'y', 'right before y started: y s first word');
+		assert.equal(a.resolveSpeaker(620, 980).id, null, 'the whole pause could be either');
+		assert.equal(a.speakerAt(620, 720), null, 'and none of it is evidence for the gate');
+	});
+});

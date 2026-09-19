@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.3] — 2026-09-19
+
+### Fixed
+
+- **The voice came back on a word that meant the opposite.** Heard live: the owner said "Melis sus", quiet
+  went on, and six seconds later the transcript delivered "Artık konuş" — almost certainly "artık konuşma"
+  (do not talk any more) with its ending lost — and the bare word gave the voice back. Giving the voice back
+  by mistake is the direction the owner minds, so the bare way back ("konuş", "konuşun") now needs the
+  bot's name next to it ("Melis konuş"); the longer forms ("konuşabilirsin", "sessizliği kaldır", "quiet
+  ayarını kapat" …) need no name, as before.
+- **A fragment in the hand-off between two people was nobody's.** With one voice at a time sent there are
+  no overlaps left, only pauses between speakers; a fragment landing in one is the tail of the one who
+  stopped or the first word of the one who started, and it now goes to whichever is nearer the pause (by a
+  clear margin; from the middle of the pause it is still nobody's). Heard live: "Melis sus" fell in such a
+  pause, was given to nobody, and the owner had to say it again. The line the model is told about such a
+  fragment no longer calls it "two voices at once", and tells the model not to ask who said it.
+
 ## [1.29.2] — 2026-09-19
 
 ### Fixed
