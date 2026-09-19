@@ -104,15 +104,26 @@ const NO_AUDIO_SAMPLE = 6;
 // claim, so it needs the probability of being addressed to be low, not merely below half. Lines shorter
 // than a word are not worth a round trip.
 const JEV_BANTER_P = 0.7;
-const JEV_NOT_ADDRESSED_P = 0.25;
+// Below this a line was not for the bot and the reply stays off the channel; above JEV_ADDRESSED_P it
+// clearly was and the reply goes out at once. In between, on a line that is still being spoken, the
+// answer is "wait for more of it": measured live, one word of a line ("Adem", "İyi adam") came back
+// anywhere between 28% and 58%, and every one of those lines turned out to be for somebody else.
+const JEV_NOT_ADDRESSED_P = 0.3;
+const JEV_ADDRESSED_P = 0.6;
 const JEV_MIN_CHARS = 4;
+// A line that has grown by this much since it was last judged is asked about again.
+const JEV_GROWTH_CHARS = 5;
 // The reply gate. A line is judged as soon as its pieces stop arriving for this long, well before the
 // line is closed for the record, because the model starts answering about a second after the person
 // stops and the verdict has to be there first. While Jev answers, the bot's audio is held for at most
 // this long and then played anyway: a slow Jev costs a moment, never the reply. A reply to a line that
 // was not for the bot is kept off the channel for the length of that reply, with this much patience
 // for it to start.
-const JEV_SETTLE_MS = 300;
+const JEV_SETTLE_MS = 450;
+// The audio says somebody stopped long before the transcript does, and the model answers within about
+// a second of it: the hold starts there, and the first question is asked this soon after, from whatever
+// the transcript has delivered.
+const JEV_SPEECH_END_SETTLE_MS = 200;
 const REPLY_HOLD_MAX_MS = 1500;
 const REPLY_SUPPRESS_MS = 4000;
 // The session's own report on itself: every few minutes, once enough has happened to say anything.
@@ -351,6 +362,8 @@ export class GuildSession {
 		// said that the channel actually heard.
 		this.earlyJudge = null;
 		this.earlyJudgeTimer = null;
+		this.speakingNow = []; // who the mixer said was speaking on the last frame (noteSpeechEnd)
+		this.closedLineToJudge = null; // a line that closed while a judgment was still pending
 		this.replyHold = null;
 		this.suppress = null;
 		this.lastSuppressedAt = 0;
@@ -393,6 +406,7 @@ export class GuildSession {
 				if (frame.others?.length) this.health.overlap(frame.others);
 				this.attribution.onFrame(frame);
 				this.trackSentSpeaker(frame);
+				this.noteSpeechEnd(frame);
 				if (this.cfg.debug) this.logSpeaking(frame.active);
 			},
 			onUserPcm: (userId, pcm) => {
@@ -1956,27 +1970,60 @@ export class GuildSession {
 	 */
 	judgeLine(item) {
 		if (!this.jev?.enabled || !item.id || item.line.length < JEV_MIN_CHARS) return;
-		// Usually the line was judged while it was still being spoken (judgeEarly) and the verdict has
-		// already done its work; a second round trip on the same words would only cost money.
 		const early = this.earlyJudge;
-		if (early && item.line.startsWith(early.text.slice(0, Math.min(12, early.text.length)))) {
+		const sameLine = early && item.line.startsWith(early.text.slice(0, Math.min(12, early.text.length)));
+		const grown = !early || item.line.length - early.text.length >= JEV_GROWTH_CHARS;
+		if (sameLine && early.pending) {
+			// The answer about a shorter version is still on its way; the closed line gets the final word
+			// once it has arrived (see judgeEarly's callback).
 			early.flushed = true;
-			if (!early.pending) this.earlyJudge = null;
+			if (grown) this.closedLineToJudge = { text: item.line, id: item.id };
 			return;
 		}
+		if (sameLine && (early.byName || !grown)) {
+			// Already judged as it stands: nothing new to ask, and nothing left to wait for.
+			this.earlyJudge = null;
+			this.releaseReplyHold();
+			return;
+		}
+		this.earlyJudge = null;
+		this.judgeClosedLine({ text: item.line, id: item.id });
+	}
+
+	/** The final word on a line: judged whole, and whatever the answer, the hold does not outlive it. */
+	judgeClosedLine({ text, id }) {
 		const askedAt = Date.now();
 		void this.jev
-			.judge(this.judgeInput(item.line, item.id))
-			.then((hit) => this.applyVerdict(hit, { text: item.line, id: item.id, ms: Date.now() - askedAt }))
-			.catch(() => {});
+			.judge(this.judgeInput(text, id))
+			.then((hit) => this.applyVerdict(hit, { text, id, ms: Date.now() - askedAt, final: true }))
+			.catch(() => this.releaseReplyHold());
+	}
+
+	/** Who the mixer says is speaking, frame by frame: the moment somebody stops is when the reply gate has to act. */
+	noteSpeechEnd(frame) {
+		const now = (frame?.active ?? []).map(String);
+		for (const id of this.speakingNow) if (!now.includes(id)) this.onUserSpeechEnd(id);
+		this.speakingNow = now;
 	}
 
 	/**
-	 * Judge the line being spoken as soon as its pieces stop arriving for a moment -- before it is closed
-	 * for the record, because the model starts answering about a second after the person stops, and
-	 * "was that for me at all" has to be answered first. A line that names the bot never waits. Otherwise
-	 * the bot's audio is held while Jev answers (see holdReply), and the verdict decides whether the
-	 * reply reaches the channel.
+	 * Somebody just stopped talking, and the model answers within about a second of that. The audio says
+	 * so long before the transcript does, so this is where the reply is held -- before it can start --
+	 * and where the first question is asked, from whatever the transcript has delivered; the verdict
+	 * improves as the rest of the line arrives (judgeEarly asks again when the line grows).
+	 */
+	onUserSpeechEnd() {
+		if (!this.jev?.enabled || !this.live?.ready || this.localMode || !this.cfg.jevReplyGate) return;
+		this.holdReply();
+		if (this.earlyJudgeTimer) clearTimeout(this.earlyJudgeTimer);
+		this.earlyJudgeTimer = setTimeout(() => this.judgeEarly(), JEV_SPEECH_END_SETTLE_MS);
+	}
+
+	/**
+	 * Judge the line being spoken: first as soon as the speaker stops (or the pieces pause), then again
+	 * whenever it has grown by a word, because one word of a line says little about who it was for. A
+	 * line that names the bot never waits. The bot's audio is held meanwhile (see holdReply), and the
+	 * verdict decides whether the reply reaches the channel.
 	 */
 	judgeEarly() {
 		this.earlyJudgeTimer = null;
@@ -1988,14 +2035,15 @@ export class GuildSession {
 		const id = named.length ? named[named.length - 1].id : null;
 		if (!id || text.length < JEV_MIN_CHARS) return;
 		const early = this.earlyJudge;
-		if (early && !early.flushed && text.startsWith(early.text)) return; // the same line, already asked about
+		if (early && early.pending) return; // one question at a time; its answer decides whether to ask again
+		if (early && !early.flushed && text.startsWith(early.text) && (early.byName || text.length - early.text.length < JEV_GROWTH_CHARS)) return;
 		const tokens = normalize(text).split(' ').filter(Boolean);
 		if (tokens.some((token) => this.wakeWordSet().has(token))) {
-			this.earlyJudge = { text, id, pending: false, flushed: false, verdict: { addressed: 1, byName: true } };
+			this.earlyJudge = { text, id, pending: false, flushed: false, byName: true, verdict: { addressed: 1, byName: true } };
 			this.releaseReplyHold();
 			return;
 		}
-		const judge = { text, id, pending: true, flushed: false, verdict: null };
+		const judge = { text, id, pending: true, flushed: false, byName: false, verdict: null };
 		this.earlyJudge = judge;
 		this.holdReply();
 		const askedAt = Date.now();
@@ -2004,8 +2052,23 @@ export class GuildSession {
 			.then((hit) => {
 				judge.pending = false;
 				judge.verdict = hit;
-				if (this.earlyJudge === judge) this.applyVerdict(hit, { text, id, ms: Date.now() - askedAt });
-				else this.releaseReplyHold();
+				if (this.earlyJudge !== judge) {
+					this.releaseReplyHold();
+					return;
+				}
+				this.applyVerdict(hit, { text, id, ms: Date.now() - askedAt });
+				// The line went on while the question was out: ask about the fuller line -- the closed one
+				// when it closed meanwhile, otherwise what the transcript has delivered since.
+				const closed = this.closedLineToJudge;
+				if (closed) {
+					this.closedLineToJudge = null;
+					this.earlyJudge = null;
+					this.judgeClosedLine(closed);
+					return;
+				}
+				const now = this.transcriptBuffers.get('user');
+				const grown = now?.parts.length ? runText({ parts: now.parts }) : '';
+				if (!judge.flushed && grown.length - text.length >= JEV_GROWTH_CHARS) this.judgeEarly();
 			})
 			.catch(() => this.releaseReplyHold());
 	}
@@ -2028,13 +2091,15 @@ export class GuildSession {
 	 * off the channel until it ends, and the model is told its answer was not played. Banter: the model
 	 * is told so. Anything else: the held audio goes out as if nothing had happened.
 	 */
-	applyVerdict(hit, { text, id, ms = null }) {
+	applyVerdict(hit, { text, id, ms = null, final = false }) {
 		const notForBot = Boolean(hit) && hit.addressed <= JEV_NOT_ADDRESSED_P;
 		const banter = Boolean(hit) && hit.kind === 'banter' && hit.kindP >= JEV_BANTER_P;
 		this.health.jevVerdict(hit, ms, { notForBot, banter });
 		this.trace?.jev({ text, id, ms, hit, notForBot, banter });
 		if (!hit) {
-			this.releaseReplyHold();
+			// No answer. On a line still being spoken the next question may bring one; on a closed line
+			// there is nothing more to wait for.
+			if (final) this.releaseReplyHold();
 			return;
 		}
 		const who = this.speakerLabel(id);
@@ -2065,7 +2130,12 @@ export class GuildSession {
 			if (this.live?.ready) this.live.appendContext('thinking', t('runtime.jev_not_addressed', { line: clipped }));
 			return;
 		}
-		this.releaseReplyHold();
+		// Clearly for the bot, or the closed line: the reply goes out. Unclear on a line still being spoken:
+		// keep holding, a fuller line or the timeout decides. A fuller line saying "for the bot" also calls
+		// off a suppression that a shorter one started, as long as nothing has been dropped yet.
+		const clearlyForBot = hit.addressed >= JEV_ADDRESSED_P;
+		if (clearlyForBot || final) this.releaseReplyHold();
+		if (clearlyForBot && this.suppress && !this.suppress.started) this.suppress = null;
 		if (banter && this.live?.ready) {
 			this.live.appendContext('thinking', t('runtime.jev_banter', { line: clipped }));
 		}
@@ -2075,7 +2145,7 @@ export class GuildSession {
 	holdReply() {
 		if (!this.cfg.jevReplyGate || this.localMode) return;
 		if (Date.now() - this.lastAssistantSpokeAt <= SILENCE_GAP_MS) return;
-		this.releaseReplyHold();
+		if (this.replyHold) return; // already holding: the timeout runs from the stop, not from the latest question
 		this.replyHold = { samples: [], since: Date.now(), timer: setTimeout(() => this.releaseReplyHold(), REPLY_HOLD_MAX_MS) };
 	}
 

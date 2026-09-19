@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.1] — 2026-09-19
+
+### Fixed
+
+- **The reply gate judged one word and never asked again.** Heard live: the owner, alone with the bot, said
+  "Adem hoş geldin", "Adem naber", "İyi adam nasıl olsun" — and the bot welcomed Adem itself, asked Adem how
+  he was, and joined in. The line was judged as soon as its pieces paused for 300 ms, which in practice was
+  its first word ("Adem": 28% to 58% "for the bot", never below the bar), and the fuller line was then
+  skipped as "already asked". And the model answers within 0.4 to 0.7 s of a person stopping, before a
+  transcript-timed hold could start. The gate is now anchored to the audio: the moment the mixer says
+  somebody stopped, the reply is held and the first question goes out from whatever the transcript has
+  delivered; it asks again whenever the line has grown by a word, and the closed line gets the final word.
+  On a doubt about a line still being spoken it keeps holding rather than guessing; a clear yes (60%) lets
+  the reply out at once; a fuller yes calls off a doubtful no before anything is dropped; and the bar for
+  "not for the bot" is 30%.
+
 ## [1.29.0] — 2026-09-19
 
 ### Added
